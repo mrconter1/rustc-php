@@ -12,6 +12,7 @@ class Token {
     const LOOP     = 'LOOP';
     const BREAK    = 'BREAK';
     const CONTINUE = 'CONTINUE';
+    const STRUCT   = 'STRUCT';
     const TRUE     = 'TRUE';
     const FALSE    = 'FALSE';
 

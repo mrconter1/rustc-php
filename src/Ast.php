@@ -2,8 +2,56 @@
 
 class ProgramNode {
     public array $functions;
-    public function __construct(array $functions) {
+    public array $structs;
+    public function __construct(array $functions, array $structs = []) {
         $this->functions = $functions;
+        $this->structs   = $structs;
+    }
+}
+
+class StructDefNode {
+    public string $name;
+    public array  $fields;
+    public int    $line;
+    public function __construct(string $name, array $fields, int $line) {
+        $this->name   = $name;
+        $this->fields = $fields;
+        $this->line   = $line;
+    }
+}
+
+class StructLitNode {
+    public string $struct_name;
+    public array  $fields;
+    public int    $line;
+    public function __construct(string $struct_name, array $fields, int $line) {
+        $this->struct_name = $struct_name;
+        $this->fields      = $fields;
+        $this->line        = $line;
+    }
+}
+
+class FieldAccessNode {
+    public mixed  $object;
+    public string $field_name;
+    public int    $line;
+    public function __construct(mixed $object, string $field_name, int $line) {
+        $this->object     = $object;
+        $this->field_name = $field_name;
+        $this->line       = $line;
+    }
+}
+
+class FieldAssignNode {
+    public mixed  $object;
+    public string $field_name;
+    public mixed  $value;
+    public int    $line;
+    public function __construct(mixed $object, string $field_name, mixed $value, int $line) {
+        $this->object     = $object;
+        $this->field_name = $field_name;
+        $this->value      = $value;
+        $this->line       = $line;
     }
 }
 

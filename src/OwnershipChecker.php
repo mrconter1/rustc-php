@@ -4,10 +4,25 @@ require_once __DIR__ . '/Ast.php';
 
 class OwnershipChecker {
     private array $vars = [];
-    private array $func_sigs = []; // name => ['params' => [...], 'return_type' => string|null]
+    private array $func_sigs = [];
+    private array $struct_defs = [];
     private ?string $current_return_type = null;
 
     public function check(ProgramNode $program): void {
+        foreach ($program->structs as $sd) {
+            $size = 0;
+            $field_offsets = [];
+            foreach ($sd->fields as $f) {
+                $field_offsets[$f['name']] = $size;
+                $size += 8;
+            }
+            $this->struct_defs[$sd->name] = [
+                'fields' => $sd->fields,
+                'size' => $size,
+                'field_offsets' => $field_offsets,
+            ];
+        }
+
         foreach ($program->functions as $fn) {
             $this->func_sigs[$fn->name] = [
                 'params' => $fn->params,
@@ -107,6 +122,37 @@ class OwnershipChecker {
                 $this->vars[$stmt->name]['moved_to'] = null;
                 $this->vars[$stmt->name]['moved_line'] = null;
             }
+            return;
+        }
+
+        if ($stmt instanceof FieldAssignNode) {
+            if ($stmt->object instanceof IdentNode) {
+                $name = $stmt->object->name;
+                if (!isset($this->vars[$name])) {
+                    throw new RuntimeException("Undefined variable '$name' on line {$stmt->line}");
+                }
+                if (!$this->vars[$name]['mutable']) {
+                    throw new RuntimeException(
+                        "Cannot assign to field of immutable variable '$name' on line {$stmt->line}"
+                    );
+                }
+                $var_type = $this->vars[$name]['type'];
+                if (isset($this->struct_defs[$var_type])) {
+                    $sd = $this->struct_defs[$var_type];
+                    foreach ($sd['fields'] as $f) {
+                        if ($f['name'] === $stmt->field_name) {
+                            $val_type = $this->exprType($stmt->value);
+                            if ($val_type !== $f['type']) {
+                                throw new RuntimeException(
+                                    "Type mismatch: cannot assign '$val_type' to field '{$stmt->field_name}' of type '{$f['type']}' on line {$stmt->line}"
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            $this->checkExpr($stmt->value);
             return;
         }
 
@@ -217,6 +263,18 @@ class OwnershipChecker {
             return;
         }
 
+        if ($expr instanceof StructLitNode) {
+            foreach ($expr->fields as $f) {
+                $this->checkExpr($f['value']);
+            }
+            return;
+        }
+
+        if ($expr instanceof FieldAccessNode) {
+            $this->checkExpr($expr->object);
+            return;
+        }
+
         if ($expr instanceof BorrowNode) {
             $this->checkExpr($expr->operand);
             if ($expr->mutable && $expr->operand instanceof IdentNode) {
@@ -293,13 +351,30 @@ class OwnershipChecker {
     private function isCopy(string $type): bool {
         if (str_starts_with($type, '&mut ')) return false;
         if (str_starts_with($type, '&')) return true;
-        return in_array($type, ['i32', 'bool']);
+        if (in_array($type, ['i32', 'bool'])) return true;
+        if (isset($this->struct_defs[$type])) {
+            foreach ($this->struct_defs[$type]['fields'] as $f) {
+                if (!$this->isCopy($f['type'])) return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     private function exprType(mixed $expr): string {
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
+        if ($expr instanceof StructLitNode) return $expr->struct_name;
+        if ($expr instanceof FieldAccessNode) {
+            $obj_type = $this->exprType($expr->object);
+            if (isset($this->struct_defs[$obj_type])) {
+                foreach ($this->struct_defs[$obj_type]['fields'] as $f) {
+                    if ($f['name'] === $expr->field_name) return $f['type'];
+                }
+            }
+            return 'i32';
+        }
         if ($expr instanceof IdentNode) {
             return $this->vars[$expr->name]['type'] ?? 'i32';
         }

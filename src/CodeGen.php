@@ -14,6 +14,7 @@ class CodeGen {
 
     private array $func_addrs = [];
     private array $func_sigs = [];
+    private array $struct_defs = [];
     private array $call_patches = [];
     private array $return_patches = [];
     private array $let_slots = [];
@@ -33,6 +34,21 @@ class CodeGen {
         $this->call_patches = [];
         $this->func_addrs = [];
         $this->func_sigs = [];
+        $this->struct_defs = [];
+
+        foreach ($program->structs as $sd) {
+            $size = 0;
+            $field_offsets = [];
+            foreach ($sd->fields as $f) {
+                $field_offsets[$f['name']] = $size;
+                $size += 8;
+            }
+            $this->struct_defs[$sd->name] = [
+                'fields' => $sd->fields,
+                'size' => $size,
+                'field_offsets' => $field_offsets,
+            ];
+        }
 
         foreach ($program->functions as $fn) {
             $this->func_sigs[$fn->name] = [
@@ -87,6 +103,16 @@ class CodeGen {
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
+        if ($expr instanceof StructLitNode) return $expr->struct_name;
+        if ($expr instanceof FieldAccessNode) {
+            $obj_type = $this->exprType($expr->object);
+            if (isset($this->struct_defs[$obj_type])) {
+                foreach ($this->struct_defs[$obj_type]['fields'] as $f) {
+                    if ($f['name'] === $expr->field_name) return $f['type'];
+                }
+            }
+            return 'i32';
+        }
         if ($expr instanceof IdentNode) {
             $type = $this->vars[$expr->name]['type'] ?? 'i32';
             if (str_starts_with($type, '&mut ')) return substr($type, 5);
@@ -186,7 +212,12 @@ class CodeGen {
         foreach ($stmts as $stmt) {
             if ($stmt instanceof LetNode) {
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
-                $size = ($type === 'String') ? 16 : 8;
+                $size = 8;
+                if ($type === 'String') {
+                    $size = 16;
+                } elseif (isset($this->struct_defs[$type])) {
+                    $size = $this->struct_defs[$type]['size'];
+                }
                 $this->stack_size += $size;
                 $slot = [
                     'offset' => $this->stack_size,
@@ -218,13 +249,23 @@ class CodeGen {
 
     private function generateStmt(mixed $stmt): void {
         if ($stmt instanceof LetNode) {
-            $this->generateExpr($stmt->value);
             $slot = $this->let_slots[spl_object_id($stmt)];
-            $this->vars[$stmt->name] = $slot;
-            $this->asm->store(X86::RBP, -$slot['offset'], X86::RAX);
-            if ($slot['type'] === 'String') {
-                $this->asm->store(X86::RBP, -($slot['offset'] - 8), X86::RDX);
+
+            if ($stmt->value instanceof StructLitNode) {
+                $sd = $this->struct_defs[$stmt->value->struct_name];
+                foreach ($stmt->value->fields as $f) {
+                    $this->generateExpr($f['value']);
+                    $field_off = $sd['field_offsets'][$f['name']];
+                    $this->asm->store(X86::RBP, -($slot['offset'] - $field_off), X86::RAX);
+                }
+            } else {
+                $this->generateExpr($stmt->value);
+                $this->asm->store(X86::RBP, -$slot['offset'], X86::RAX);
+                if ($slot['type'] === 'String') {
+                    $this->asm->store(X86::RBP, -($slot['offset'] - 8), X86::RDX);
+                }
             }
+            $this->vars[$stmt->name] = $slot;
             return;
         }
 
@@ -236,6 +277,17 @@ class CodeGen {
                 $this->asm->load(X86::RCX, X86::RBP, -$var['offset']);
                 $this->asm->pop(X86::RAX);
                 $this->asm->store(X86::RCX, 0, X86::RAX);
+            }
+            return;
+        }
+
+        if ($stmt instanceof FieldAssignNode) {
+            $this->generateExpr($stmt->value);
+            if ($stmt->object instanceof IdentNode) {
+                $var = $this->vars[$stmt->object->name];
+                $sd = $this->struct_defs[$var['type']];
+                $field_off = $sd['field_offsets'][$stmt->field_name];
+                $this->asm->store(X86::RBP, -($var['offset'] - $field_off), X86::RAX);
             }
             return;
         }
@@ -460,6 +512,16 @@ class CodeGen {
                 $this->asm->load(X86::RAX, X86::RAX, 0);
             } elseif (str_starts_with($var['type'], '&')) {
                 $this->asm->load(X86::RAX, X86::RAX, 0);
+            }
+            return;
+        }
+
+        if ($expr instanceof FieldAccessNode) {
+            if ($expr->object instanceof IdentNode) {
+                $var = $this->vars[$expr->object->name];
+                $sd = $this->struct_defs[$var['type']];
+                $field_off = $sd['field_offsets'][$expr->field_name];
+                $this->asm->load(X86::RAX, X86::RBP, -($var['offset'] - $field_off));
             }
             return;
         }

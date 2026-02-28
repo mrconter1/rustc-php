@@ -7,17 +7,56 @@ require_once __DIR__ . '/Ast.php';
 class Parser {
     private array $tokens;
     private int   $pos = 0;
+    private array $struct_names = [];
 
     public function __construct(array $tokens) {
         $this->tokens = $tokens;
     }
 
     public function parse(): ProgramNode {
-        $functions = [];
+        $saved = $this->pos;
         while (!$this->check(Token::EOF)) {
-            $functions[] = $this->parseFunction();
+            if ($this->check(Token::STRUCT)) {
+                $this->pos++;
+                $this->struct_names[] = $this->expect(Token::IDENT)->value;
+                while (!$this->check(Token::RBRACE) && !$this->check(Token::EOF)) {
+                    $this->pos++;
+                }
+                if ($this->check(Token::RBRACE)) $this->pos++;
+            } else {
+                $this->pos++;
+            }
         }
-        return new ProgramNode($functions);
+        $this->pos = $saved;
+
+        $functions = [];
+        $structs = [];
+        while (!$this->check(Token::EOF)) {
+            if ($this->check(Token::STRUCT)) {
+                $structs[] = $this->parseStruct();
+            } else {
+                $functions[] = $this->parseFunction();
+            }
+        }
+        return new ProgramNode($functions, $structs);
+    }
+
+    private function parseStruct(): StructDefNode {
+        $line = $this->expect(Token::STRUCT)->line;
+        $name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::LBRACE);
+        $fields = [];
+        while (!$this->check(Token::RBRACE)) {
+            $fname = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::COLON);
+            $ftype = $this->expect(Token::IDENT)->value;
+            $fields[] = ['name' => $fname, 'type' => $ftype];
+            if ($this->check(Token::COMMA)) {
+                $this->pos++;
+            }
+        }
+        $this->expect(Token::RBRACE);
+        return new StructDefNode($name, $fields, $line);
     }
 
     private function parseFunction(): FunctionNode {
@@ -121,6 +160,14 @@ class Parser {
             $value = $this->parseExpr();
             $this->expect(Token::SEMICOLON);
             return new DerefAssignNode($expr->operand, $value, $line);
+        }
+
+        if ($expr instanceof FieldAccessNode && $this->check(Token::EQ)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $value = $this->parseExpr();
+            $this->expect(Token::SEMICOLON);
+            return new FieldAssignNode($expr->object, $expr->field_name, $value, $line);
         }
 
         if ($this->check(Token::RBRACE)) {
@@ -242,6 +289,22 @@ class Parser {
         $condition = $this->parseExpr();
         $body = $this->parseBlock();
         return new WhileNode($condition, $body, $line);
+    }
+
+    private function parseStructLiteral(string $name, int $line): StructLitNode {
+        $this->expect(Token::LBRACE);
+        $fields = [];
+        while (!$this->check(Token::RBRACE)) {
+            $fname = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::COLON);
+            $value = $this->parseExpr();
+            $fields[] = ['name' => $fname, 'value' => $value];
+            if ($this->check(Token::COMMA)) {
+                $this->pos++;
+            }
+        }
+        $this->expect(Token::RBRACE);
+        return new StructLitNode($name, $fields, $line);
     }
 
     // --- expression parsing with precedence ---
@@ -378,7 +441,11 @@ class Parser {
                     "Unknown static method {$token->value}::$method on line {$token->line}"
                 );
             }
-            if ($this->check(Token::LPAREN)) {
+
+            $expr = null;
+            if ($this->check(Token::LBRACE) && in_array($token->value, $this->struct_names)) {
+                $expr = $this->parseStructLiteral($token->value, $token->line);
+            } elseif ($this->check(Token::LPAREN)) {
                 $this->expect(Token::LPAREN);
                 $args = [];
                 while (!$this->check(Token::RPAREN)) {
@@ -388,9 +455,18 @@ class Parser {
                     }
                 }
                 $this->expect(Token::RPAREN);
-                return new CallNode($token->value, $args, $token->line);
+                $expr = new CallNode($token->value, $args, $token->line);
+            } else {
+                $expr = new IdentNode($token->value, $token->line);
             }
-            return new IdentNode($token->value, $token->line);
+
+            while ($this->check(Token::DOT)) {
+                $this->pos++;
+                $field = $this->expect(Token::IDENT)->value;
+                $expr = new FieldAccessNode($expr, $field, $expr->line);
+            }
+
+            return $expr;
         }
 
         if ($token->type === Token::IF) {
