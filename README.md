@@ -1,12 +1,10 @@
-# rustc-php
+# rustc-php: A Rust compiler written in PHP
 
-> Under Development
-
-This project compiles valid Rust code with ownership checking into raw executable machine code using PHP 8.4.
+A Rust compiler written in PHP that emits x86-64 Linux binaries directly, no LLVM, no assembler, no linker. Features ownership checking, borrow checking, type checking, structs, functions, control flow, and move semantics. Useful if you need to compile Rust on a shared hosting server from 2008 where the only installed runtime is PHP.
 
 ## Installation
 
-In order to build Rust code you of course first need to install PHP. You can do this easily on Windows 11 by running this command:
+In order to execute Rust code you of course first need to install PHP. You can do this easily on Windows 11 by running this command:
 
 ```
 winget install PHP.PHP.8.4
