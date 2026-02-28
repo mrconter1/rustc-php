@@ -2,92 +2,7 @@
 
 require_once __DIR__ . '/Token.php';
 require_once __DIR__ . '/Lexer.php';
-
-// AST node types
-
-class ProgramNode {
-    public array $functions;
-    public function __construct(array $functions) {
-        $this->functions = $functions;
-    }
-}
-
-class FunctionNode {
-    public string $name;
-    public array  $body;
-    public int    $line;
-    public function __construct(string $name, array $body, int $line) {
-        $this->name = $name;
-        $this->body = $body;
-        $this->line = $line;
-    }
-}
-
-class LetNode {
-    public string  $name;
-    public ?string $type_name;
-    public mixed   $value;
-    public int     $line;
-    public function __construct(string $name, ?string $type_name, mixed $value, int $line) {
-        $this->name      = $name;
-        $this->type_name = $type_name;
-        $this->value     = $value;
-        $this->line      = $line;
-    }
-}
-
-class ExprStmtNode {
-    public mixed $expr;
-    public int   $line;
-    public function __construct(mixed $expr, int $line) {
-        $this->expr = $expr;
-        $this->line = $line;
-    }
-}
-
-class IntLitNode {
-    public int $value;
-    public int $line;
-    public function __construct(int $value, int $line) {
-        $this->value = $value;
-        $this->line  = $line;
-    }
-}
-
-class IdentNode {
-    public string $name;
-    public int    $line;
-    public function __construct(string $name, int $line) {
-        $this->name = $name;
-        $this->line = $line;
-    }
-}
-
-class BinaryOpNode {
-    public mixed  $left;
-    public string $op;
-    public mixed  $right;
-    public int    $line;
-    public function __construct(mixed $left, string $op, mixed $right, int $line) {
-        $this->left  = $left;
-        $this->op    = $op;
-        $this->right = $right;
-        $this->line  = $line;
-    }
-}
-
-class CallNode {
-    public string $name;
-    public array  $args;
-    public int    $line;
-    public function __construct(string $name, array $args, int $line) {
-        $this->name = $name;
-        $this->args = $args;
-        $this->line = $line;
-    }
-}
-
-// Parser
+require_once __DIR__ . '/Ast.php';
 
 class Parser {
     private array $tokens;
@@ -129,6 +44,9 @@ class Parser {
         if ($this->check(Token::LET)) {
             return $this->parseLet();
         }
+        if ($this->check(Token::IF)) {
+            return $this->parseIf();
+        }
         $expr = $this->parseExpr();
         $this->expect(Token::SEMICOLON);
         return new ExprStmtNode($expr, $expr->line);
@@ -149,6 +67,24 @@ class Parser {
         $this->expect(Token::SEMICOLON);
 
         return new LetNode($name, $type_name, $value, $line);
+    }
+
+    private function parseIf(): IfNode {
+        $line = $this->expect(Token::IF)->line;
+        $condition = $this->parseExpr();
+        $then_body = $this->parseBlock();
+
+        $else_body = null;
+        if ($this->check(Token::ELSE)) {
+            $this->pos++;
+            if ($this->check(Token::IF)) {
+                $else_body = [$this->parseIf()];
+            } else {
+                $else_body = $this->parseBlock();
+            }
+        }
+
+        return new IfNode($condition, $then_body, $else_body, $line);
     }
 
     // --- expression parsing with precedence ---
@@ -201,6 +137,16 @@ class Parser {
         if ($token->type === Token::INT_LIT) {
             $this->pos++;
             return new IntLitNode($token->value, $token->line);
+        }
+
+        if ($token->type === Token::TRUE) {
+            $this->pos++;
+            return new BoolLitNode(true, $token->line);
+        }
+
+        if ($token->type === Token::FALSE) {
+            $this->pos++;
+            return new BoolLitNode(false, $token->line);
         }
 
         if ($token->type === Token::IDENT) {

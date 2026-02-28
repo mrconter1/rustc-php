@@ -4,7 +4,7 @@ require_once __DIR__ . '/Parser.php';
 
 class CodeGen {
     private string $code = '';
-    private array  $vars = []; // name => stack offset
+    private array  $vars = [];
     private int    $stack_size = 0;
 
     public function generate(ProgramNode $program): string {
@@ -35,11 +35,9 @@ class CodeGen {
             $this->emit("\x48\x83\xEC" . pack('C', $aligned));
         }
 
-        foreach ($fn->body as $stmt) {
-            $this->generateStmt($stmt);
-        }
+        $this->generateBody($fn->body);
 
-        // implicit exit(0) at end of main
+        // implicit exit(0)
         $this->emitExit(0);
     }
 
@@ -49,6 +47,18 @@ class CodeGen {
                 $this->stack_size += 8;
                 $this->vars[$stmt->name] = $this->stack_size;
             }
+            if ($stmt instanceof IfNode) {
+                $this->collectVars($stmt->then_body);
+                if ($stmt->else_body !== null) {
+                    $this->collectVars($stmt->else_body);
+                }
+            }
+        }
+    }
+
+    private function generateBody(array $stmts): void {
+        foreach ($stmts as $stmt) {
+            $this->generateStmt($stmt);
         }
     }
 
@@ -58,6 +68,11 @@ class CodeGen {
             $offset = $this->vars[$stmt->name];
             // mov [rbp - offset], rax
             $this->emit("\x48\x89\x45" . pack('c', -$offset));
+            return;
+        }
+
+        if ($stmt instanceof IfNode) {
+            $this->generateIf($stmt);
             return;
         }
 
@@ -82,10 +97,53 @@ class CodeGen {
         throw new RuntimeException("Unknown statement type: " . get_class($stmt));
     }
 
+    private function generateIf(IfNode $node): void {
+        $this->generateExpr($node->condition);
+        // test rax, rax
+        $this->emit("\x48\x85\xC0");
+
+        if ($node->else_body === null) {
+            // jz end (32-bit relative, backpatched)
+            $this->emit("\x0F\x84");
+            $jz_patch = strlen($this->code);
+            $this->emit("\x00\x00\x00\x00");
+
+            $this->generateBody($node->then_body);
+
+            $this->patch32($jz_patch, strlen($this->code) - $jz_patch - 4);
+        } else {
+            // jz else (32-bit relative, backpatched)
+            $this->emit("\x0F\x84");
+            $jz_patch = strlen($this->code);
+            $this->emit("\x00\x00\x00\x00");
+
+            $this->generateBody($node->then_body);
+
+            // jmp end (32-bit relative, backpatched)
+            $this->emit("\xE9");
+            $jmp_patch = strlen($this->code);
+            $this->emit("\x00\x00\x00\x00");
+
+            // patch jz to jump here (else block)
+            $this->patch32($jz_patch, strlen($this->code) - $jz_patch - 4);
+
+            $this->generateBody($node->else_body);
+
+            // patch jmp to jump here (end)
+            $this->patch32($jmp_patch, strlen($this->code) - $jmp_patch - 4);
+        }
+    }
+
     private function generateExpr(mixed $expr): void {
         if ($expr instanceof IntLitNode) {
             // mov rax, imm32
             $this->emit("\x48\xC7\xC0" . pack('V', $expr->value));
+            return;
+        }
+
+        if ($expr instanceof BoolLitNode) {
+            $val = $expr->value ? 1 : 0;
+            $this->emit("\x48\xC7\xC0" . pack('V', $val));
             return;
         }
 
@@ -101,7 +159,7 @@ class CodeGen {
 
         if ($expr instanceof BinaryOpNode) {
             $this->generateExpr($expr->left);
-            // push rax (save left)
+            // push rax
             $this->emit("\x50");
             $this->generateExpr($expr->right);
             // mov rcx, rax (right in rcx)
@@ -111,22 +169,35 @@ class CodeGen {
 
             switch ($expr->op) {
                 case '+':
-                    // add rax, rcx
-                    $this->emit("\x48\x01\xC8");
+                    $this->emit("\x48\x01\xC8"); // add rax, rcx
                     break;
                 case '-':
-                    // sub rax, rcx
-                    $this->emit("\x48\x29\xC8");
+                    $this->emit("\x48\x29\xC8"); // sub rax, rcx
                     break;
                 case '*':
-                    // imul rax, rcx
-                    $this->emit("\x48\x0F\xAF\xC1");
+                    $this->emit("\x48\x0F\xAF\xC1"); // imul rax, rcx
                     break;
                 case '/':
-                    // cqo (sign-extend rax into rdx:rax)
-                    $this->emit("\x48\x99");
-                    // idiv rcx
-                    $this->emit("\x48\xF7\xF9");
+                    $this->emit("\x48\x99");     // cqo
+                    $this->emit("\x48\xF7\xF9"); // idiv rcx
+                    break;
+                case '==':
+                    $this->emitComparison("\x0F\x94"); // sete al
+                    break;
+                case '!=':
+                    $this->emitComparison("\x0F\x95"); // setne al
+                    break;
+                case '<':
+                    $this->emitComparison("\x0F\x9C"); // setl al
+                    break;
+                case '>':
+                    $this->emitComparison("\x0F\x9F"); // setg al
+                    break;
+                case '<=':
+                    $this->emitComparison("\x0F\x9E"); // setle al
+                    break;
+                case '>=':
+                    $this->emitComparison("\x0F\x9D"); // setge al
                     break;
                 default:
                     throw new RuntimeException("Unknown operator '{$expr->op}' on line {$expr->line}");
@@ -141,21 +212,33 @@ class CodeGen {
         throw new RuntimeException("Unknown expression type: " . get_class($expr));
     }
 
+    private function emitComparison(string $setcc_opcode): void {
+        // cmp rax, rcx
+        $this->emit("\x48\x39\xC8");
+        // setCC al
+        $this->emit($setcc_opcode . "\xC0");
+        // movzx rax, al
+        $this->emit("\x48\x0F\xB6\xC0");
+    }
+
     private function emitExit(int $code): void {
-        // mov rax, 60
-        $this->emit("\x48\xC7\xC0\x3C\x00\x00\x00");
+        $this->emit("\x48\xC7\xC0\x3C\x00\x00\x00"); // mov rax, 60
         if ($code === 0) {
-            // xor rdi, rdi
-            $this->emit("\x48\x31\xFF");
+            $this->emit("\x48\x31\xFF"); // xor rdi, rdi
         } else {
-            // mov rdi, imm32
-            $this->emit("\x48\xC7\xC7" . pack('V', $code));
+            $this->emit("\x48\xC7\xC7" . pack('V', $code)); // mov rdi, imm32
         }
-        // syscall
-        $this->emit("\x0F\x05");
+        $this->emit("\x0F\x05"); // syscall
     }
 
     private function emit(string $bytes): void {
         $this->code .= $bytes;
+    }
+
+    private function patch32(int $offset, int $value): void {
+        $packed = pack('V', $value);
+        for ($i = 0; $i < 4; $i++) {
+            $this->code[$offset + $i] = $packed[$i];
+        }
     }
 }
