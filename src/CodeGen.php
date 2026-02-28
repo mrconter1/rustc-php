@@ -16,6 +16,7 @@ class CodeGen {
     private array $func_sigs = [];
     private array $call_patches = [];
     private array $return_patches = [];
+    private array $let_slots = [];
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
@@ -110,6 +111,7 @@ class CodeGen {
         $this->vars = [];
         $this->stack_size = 0;
         $this->return_patches = [];
+        $this->let_slots = [];
 
         $reg_idx = 0;
         foreach ($fn->params as $param) {
@@ -123,7 +125,9 @@ class CodeGen {
             $reg_idx += ($param['type'] === 'String') ? 2 : 1;
         }
 
+        $param_vars = $this->vars;
         $this->collectVars($fn->body);
+        $this->vars = $param_vars;
 
         $this->asm->push(X86::RBP);
         $this->asm->mov(X86::RBP, X86::RSP);
@@ -165,10 +169,12 @@ class CodeGen {
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
                 $size = ($type === 'String') ? 16 : 8;
                 $this->stack_size += $size;
-                $this->vars[$stmt->name] = [
+                $slot = [
                     'offset' => $this->stack_size,
                     'type'   => $type,
                 ];
+                $this->let_slots[spl_object_id($stmt)] = $slot;
+                $this->vars[$stmt->name] = $slot;
             }
             if ($stmt instanceof IfNode) {
                 $this->collectVars($stmt->then_body);
@@ -191,10 +197,11 @@ class CodeGen {
     private function generateStmt(mixed $stmt): void {
         if ($stmt instanceof LetNode) {
             $this->generateExpr($stmt->value);
-            $var = $this->vars[$stmt->name];
-            $this->asm->store(X86::RBP, -$var['offset'], X86::RAX);
-            if ($var['type'] === 'String') {
-                $this->asm->store(X86::RBP, -($var['offset'] - 8), X86::RDX);
+            $slot = $this->let_slots[spl_object_id($stmt)];
+            $this->vars[$stmt->name] = $slot;
+            $this->asm->store(X86::RBP, -$slot['offset'], X86::RAX);
+            if ($slot['type'] === 'String') {
+                $this->asm->store(X86::RBP, -($slot['offset'] - 8), X86::RDX);
             }
             return;
         }
