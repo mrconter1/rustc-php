@@ -141,6 +141,7 @@ class CodeGen {
     private function isFatType(string $type): bool {
         if ($type === 'String') return true;
         if (isset($this->enum_defs[$type]) && $this->enum_defs[$type]['has_payload']) return true;
+        if (isset($this->struct_defs[$type]) && $this->struct_defs[$type]['size'] > 8) return true;
         return false;
     }
 

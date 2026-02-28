@@ -20,6 +20,10 @@ class Parser {
             if ($this->check(Token::STRUCT)) {
                 $this->pos++;
                 $this->struct_names[] = $this->expect(Token::IDENT)->value;
+                if ($this->check(Token::LT)) {
+                    while (!$this->check(Token::GT) && !$this->check(Token::EOF)) $this->pos++;
+                    if ($this->check(Token::GT)) $this->pos++;
+                }
                 while (!$this->check(Token::RBRACE) && !$this->check(Token::EOF)) {
                     $this->pos++;
                 }
@@ -129,37 +133,46 @@ class Parser {
 
     private function parseImpl(): ImplNode {
         $line = $this->expect(Token::IMPL)->line;
+        $type_params = $this->parseTypeParams();
         $struct_name = $this->expect(Token::IDENT)->value;
+        if ($this->check(Token::LT)) {
+            $this->pos++;
+            $inner = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::GT);
+            $struct_name = "$struct_name<$inner>";
+        }
         $this->expect(Token::LBRACE);
         $functions = [];
         while (!$this->check(Token::RBRACE)) {
             $functions[] = $this->parseFunction();
         }
         $this->expect(Token::RBRACE);
-        return new ImplNode($struct_name, $functions, $line);
+        return new ImplNode($struct_name, $functions, $line, $type_params);
     }
 
     private function parseStruct(): StructDefNode {
         $line = $this->expect(Token::STRUCT)->line;
         $name = $this->expect(Token::IDENT)->value;
+        $type_params = $this->parseTypeParams();
         $this->expect(Token::LBRACE);
         $fields = [];
         while (!$this->check(Token::RBRACE)) {
             $fname = $this->expect(Token::IDENT)->value;
             $this->expect(Token::COLON);
-            $ftype = $this->expect(Token::IDENT)->value;
+            $ftype = $this->parseType();
             $fields[] = ['name' => $fname, 'type' => $ftype];
             if ($this->check(Token::COMMA)) {
                 $this->pos++;
             }
         }
         $this->expect(Token::RBRACE);
-        return new StructDefNode($name, $fields, $line);
+        return new StructDefNode($name, $fields, $line, $type_params);
     }
 
     private function parseFunction(): FunctionNode {
         $this->expect(Token::FN);
         $name = $this->expect(Token::IDENT)->value;
+        $type_params = $this->parseTypeParams();
         $line = $this->current()->line;
 
         $this->expect(Token::LPAREN);
@@ -180,16 +193,7 @@ class Parser {
             } else {
                 $pname = $this->expect(Token::IDENT)->value;
                 $this->expect(Token::COLON);
-                $ref = '';
-                if ($this->check(Token::AMP)) {
-                    $ref = '&';
-                    $this->pos++;
-                    if ($this->check(Token::MUT)) {
-                        $ref = '&mut ';
-                        $this->pos++;
-                    }
-                }
-                $ptype = $ref . $this->expect(Token::IDENT)->value;
+                $ptype = $this->parseType();
                 $params[] = ['name' => $pname, 'type' => $ptype];
             }
             if ($this->check(Token::COMMA)) {
@@ -201,11 +205,11 @@ class Parser {
         $return_type = null;
         if ($this->check(Token::ARROW)) {
             $this->pos++;
-            $return_type = $this->expect(Token::IDENT)->value;
+            $return_type = $this->parseType();
         }
 
         $body = $this->parseBlock();
-        return new FunctionNode($name, $params, $return_type, $body, $line);
+        return new FunctionNode($name, $params, $return_type, $body, $line, $type_params);
     }
 
     private function parseBlock(): array {
@@ -364,16 +368,7 @@ class Parser {
         $type_name = null;
         if ($this->check(Token::COLON)) {
             $this->expect(Token::COLON);
-            $ref = '';
-            if ($this->check(Token::AMP)) {
-                $ref = '&';
-                $this->pos++;
-                if ($this->check(Token::MUT)) {
-                    $ref = '&mut ';
-                    $this->pos++;
-                }
-            }
-            $type_name = $ref . $this->expect(Token::IDENT)->value;
+            $type_name = $this->parseType();
         }
 
         $this->expect(Token::EQ);
@@ -642,6 +637,39 @@ class Parser {
     }
 
     // --- helpers ---
+
+    private function parseTypeParams(): array {
+        $params = [];
+        if ($this->check(Token::LT)) {
+            $this->pos++;
+            while (!$this->check(Token::GT)) {
+                $params[] = $this->expect(Token::IDENT)->value;
+                if ($this->check(Token::COMMA)) $this->pos++;
+            }
+            $this->expect(Token::GT);
+        }
+        return $params;
+    }
+
+    private function parseType(): string {
+        $ref = '';
+        if ($this->check(Token::AMP)) {
+            $ref = '&';
+            $this->pos++;
+            if ($this->check(Token::MUT)) {
+                $ref = '&mut ';
+                $this->pos++;
+            }
+        }
+        $name = $this->expect(Token::IDENT)->value;
+        if ($this->check(Token::LT)) {
+            $this->pos++;
+            $inner = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::GT);
+            $name = "$name<$inner>";
+        }
+        return $ref . $name;
+    }
 
     private function expect(string $type): Token {
         $token = $this->current();

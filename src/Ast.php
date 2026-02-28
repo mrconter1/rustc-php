@@ -68,11 +68,13 @@ class MatchNode {
 class StructDefNode {
     public string $name;
     public array  $fields;
+    public array  $type_params;
     public int    $line;
-    public function __construct(string $name, array $fields, int $line) {
-        $this->name   = $name;
-        $this->fields = $fields;
-        $this->line   = $line;
+    public function __construct(string $name, array $fields, int $line, array $type_params = []) {
+        $this->name        = $name;
+        $this->fields      = $fields;
+        $this->type_params = $type_params;
+        $this->line        = $line;
     }
 }
 
@@ -116,12 +118,14 @@ class FunctionNode {
     public array   $params;      // [['name' => string, 'type' => string], ...]
     public ?string $return_type;
     public array   $body;
+    public array   $type_params;
     public int     $line;
-    public function __construct(string $name, array $params, ?string $return_type, array $body, int $line) {
+    public function __construct(string $name, array $params, ?string $return_type, array $body, int $line, array $type_params = []) {
         $this->name        = $name;
         $this->params      = $params;
         $this->return_type = $return_type;
         $this->body        = $body;
+        $this->type_params = $type_params;
         $this->line        = $line;
     }
 }
@@ -340,10 +344,12 @@ class PrintlnNode {
 class ImplNode {
     public string $struct_name;
     public array  $functions;
+    public array  $type_params;
     public int    $line;
-    public function __construct(string $struct_name, array $functions, int $line) {
+    public function __construct(string $struct_name, array $functions, int $line, array $type_params = []) {
         $this->struct_name = $struct_name;
         $this->functions   = $functions;
+        $this->type_params = $type_params;
         $this->line        = $line;
     }
 }
