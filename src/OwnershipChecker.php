@@ -111,14 +111,16 @@ class OwnershipChecker {
         }
 
         if ($stmt instanceof ReturnNode) {
-            $this->checkExpr($stmt->value);
+            if ($stmt->value !== null) {
+                $this->checkExpr($stmt->value);
 
-            if ($this->current_return_type !== null) {
-                $expr_type = $this->exprType($stmt->value);
-                if ($expr_type !== $this->current_return_type) {
-                    throw new RuntimeException(
-                        "Type mismatch: expected return type '{$this->current_return_type}', got '$expr_type' on line {$stmt->line}"
-                    );
+                if ($this->current_return_type !== null) {
+                    $expr_type = $this->exprType($stmt->value);
+                    if ($expr_type !== $this->current_return_type) {
+                        throw new RuntimeException(
+                            "Type mismatch: expected return type '{$this->current_return_type}', got '$expr_type' on line {$stmt->line}"
+                        );
+                    }
                 }
             }
             return;

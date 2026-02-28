@@ -75,6 +75,10 @@ class Parser {
         }
         if ($this->check(Token::RETURN)) {
             $line = $this->expect(Token::RETURN)->line;
+            if ($this->check(Token::SEMICOLON)) {
+                $this->pos++;
+                return new ReturnNode(null, $line);
+            }
             $value = $this->parseExpr();
             $this->expect(Token::SEMICOLON);
             return new ReturnNode($value, $line);

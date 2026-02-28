@@ -4,18 +4,20 @@ $cases_dir  = __DIR__ . '/cases';
 $rustc      = __DIR__ . '/../rustc.php';
 $tmp_binary = __DIR__ . '/../test_out';
 
-$files = array_merge(
-    glob($cases_dir . '/valid/*.rs'),
-    glob($cases_dir . '/invalid/*.rs'),
-);
+$files = [];
+$it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($cases_dir));
+foreach ($it as $f) {
+    if ($f->isFile() && $f->getExtension() === 'rs') {
+        $files[] = $f->getPathname();
+    }
+}
 sort($files);
 
 $passed = 0;
 $failed = 0;
 
 foreach ($files as $file) {
-    $dir    = basename(dirname($file));
-    $name   = "$dir/" . basename($file);
+    $name   = str_replace('\\', '/', substr($file, strlen($cases_dir) + 1));
     $header = parseHeader($file);
 
     if (isset($header['error'])) {

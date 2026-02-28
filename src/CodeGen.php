@@ -217,7 +217,9 @@ class CodeGen {
         }
 
         if ($stmt instanceof ReturnNode) {
-            $this->generateExpr($stmt->value);
+            if ($stmt->value !== null) {
+                $this->generateExpr($stmt->value);
+            }
             $jmp_patch = $this->asm->jmp_rel32();
             $this->return_patches[] = $jmp_patch;
             return;
