@@ -639,6 +639,10 @@ class ModuleResolver {
                 $expr->line
             );
         }
+        if ($expr instanceof ClosureNode) {
+            $body = $this->rewriteBody($expr->body, $name_map, $prefix);
+            return new ClosureNode($expr->params, $body, $expr->line);
+        }
         return $expr;
     }
 

@@ -147,6 +147,8 @@ class Lexer {
         if ($ch === '&' && $next === '&') { $this->pos++; return new Token(Token::AND,    '&&',  $line); }
         if ($ch === '|' && $next === '|') { $this->pos++; return new Token(Token::OR,     '||',  $line); }
 
+        if ($ch === '|' && $next !== '|') { return new Token(Token::PIPE, '|', $line); }
+
         return match($ch) {
             '(' => new Token(Token::LPAREN,    '(', $line),
             ')' => new Token(Token::RPAREN,    ')', $line),

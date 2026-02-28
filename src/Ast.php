@@ -238,6 +238,17 @@ class WhileNode {
     }
 }
 
+class ClosureNode {
+    public array $params; // [['name' => string, 'type' => string], ...]
+    public array $body;   // array of stmts (single expr wrapped in ReturnNode)
+    public int   $line;
+    public function __construct(array $params, array $body, int $line) {
+        $this->params = $params;
+        $this->body   = $body;
+        $this->line   = $line;
+    }
+}
+
 class RangeNode {
     public mixed $start;
     public mixed $end;

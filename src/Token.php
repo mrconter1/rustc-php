@@ -67,6 +67,7 @@ class Token {
     const AND   = 'AND';   // &&
     const OR    = 'OR';    // ||
     const AMP   = 'AMP';   // &
+    const PIPE  = 'PIPE';  // |
 
     // End of file
     const EOF = 'EOF';

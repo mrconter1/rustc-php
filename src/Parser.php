@@ -787,6 +787,10 @@ class Parser {
             return $this->parseIf();
         }
 
+        if ($token->type === Token::PIPE) {
+            return $this->parseClosure();
+        }
+
         if ($token->type === Token::LPAREN) {
             $this->pos++;
             $expr = $this->parseExpr();
@@ -804,6 +808,29 @@ class Parser {
         throw new RuntimeException(
             "Unexpected token {$token->type}({$token->value}) on line {$token->line}"
         );
+    }
+
+    private function parseClosure(): ClosureNode {
+        $line = $this->expect(Token::PIPE)->line;
+        $params = [];
+        while (!$this->check(Token::PIPE) && !$this->check(Token::EOF)) {
+            $pname = $this->expect(Token::IDENT)->value;
+            $ptype = 'i32';
+            if ($this->check(Token::COLON)) {
+                $this->pos++;
+                $ptype = $this->parseType();
+            }
+            $params[] = ['name' => $pname, 'type' => $ptype];
+            if ($this->check(Token::COMMA)) $this->pos++;
+        }
+        $this->expect(Token::PIPE);
+        if ($this->check(Token::LBRACE)) {
+            $body = $this->parseBlock();
+        } else {
+            $expr = $this->parseExpr();
+            $body = [new ReturnNode($expr, $expr->line)];
+        }
+        return new ClosureNode($params, $body, $line);
     }
 
     // --- helpers ---
