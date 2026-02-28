@@ -21,6 +21,8 @@ class Lexer {
         'struct'   => Token::STRUCT,
         'true'     => Token::TRUE,
         'false'    => Token::FALSE,
+        'impl'     => Token::IMPL,
+        'self'     => Token::SELF,
     ];
 
     public function __construct(string $source) {

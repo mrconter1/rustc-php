@@ -15,6 +15,8 @@ class Token {
     const STRUCT   = 'STRUCT';
     const TRUE     = 'TRUE';
     const FALSE    = 'FALSE';
+    const IMPL     = 'IMPL';
+    const SELF     = 'SELF';
 
     // Literals
     const INT_LIT = 'INT_LIT';

@@ -3,9 +3,11 @@
 class ProgramNode {
     public array $functions;
     public array $structs;
-    public function __construct(array $functions, array $structs = []) {
+    public array $impls;
+    public function __construct(array $functions, array $structs = [], array $impls = []) {
         $this->functions = $functions;
         $this->structs   = $structs;
+        $this->impls     = $impls;
     }
 }
 
@@ -278,5 +280,29 @@ class PrintlnNode {
     public function __construct(array $parts, int $line) {
         $this->parts = $parts;
         $this->line  = $line;
+    }
+}
+
+class ImplNode {
+    public string $struct_name;
+    public array  $functions;
+    public int    $line;
+    public function __construct(string $struct_name, array $functions, int $line) {
+        $this->struct_name = $struct_name;
+        $this->functions   = $functions;
+        $this->line        = $line;
+    }
+}
+
+class MethodCallNode {
+    public mixed  $receiver;
+    public string $method_name;
+    public array  $args;
+    public int    $line;
+    public function __construct(mixed $receiver, string $method_name, array $args, int $line) {
+        $this->receiver    = $receiver;
+        $this->method_name = $method_name;
+        $this->args        = $args;
+        $this->line        = $line;
     }
 }

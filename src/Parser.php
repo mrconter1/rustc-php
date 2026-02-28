@@ -31,14 +31,29 @@ class Parser {
 
         $functions = [];
         $structs = [];
+        $impls = [];
         while (!$this->check(Token::EOF)) {
             if ($this->check(Token::STRUCT)) {
                 $structs[] = $this->parseStruct();
+            } elseif ($this->check(Token::IMPL)) {
+                $impls[] = $this->parseImpl();
             } else {
                 $functions[] = $this->parseFunction();
             }
         }
-        return new ProgramNode($functions, $structs);
+        return new ProgramNode($functions, $structs, $impls);
+    }
+
+    private function parseImpl(): ImplNode {
+        $line = $this->expect(Token::IMPL)->line;
+        $struct_name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::LBRACE);
+        $functions = [];
+        while (!$this->check(Token::RBRACE)) {
+            $functions[] = $this->parseFunction();
+        }
+        $this->expect(Token::RBRACE);
+        return new ImplNode($struct_name, $functions, $line);
     }
 
     private function parseStruct(): StructDefNode {
@@ -67,19 +82,33 @@ class Parser {
         $this->expect(Token::LPAREN);
         $params = [];
         while (!$this->check(Token::RPAREN)) {
-            $pname = $this->expect(Token::IDENT)->value;
-            $this->expect(Token::COLON);
-            $ref = '';
-            if ($this->check(Token::AMP)) {
-                $ref = '&';
+            if ($this->check(Token::SELF)) {
                 $this->pos++;
+                $params[] = ['name' => 'self', 'type' => 'self'];
+            } elseif ($this->check(Token::AMP)) {
+                $this->pos++;
+                $mut = false;
                 if ($this->check(Token::MUT)) {
-                    $ref = '&mut ';
+                    $mut = true;
                     $this->pos++;
                 }
+                $this->expect(Token::SELF);
+                $params[] = ['name' => 'self', 'type' => ($mut ? '&mut self' : '&self')];
+            } else {
+                $pname = $this->expect(Token::IDENT)->value;
+                $this->expect(Token::COLON);
+                $ref = '';
+                if ($this->check(Token::AMP)) {
+                    $ref = '&';
+                    $this->pos++;
+                    if ($this->check(Token::MUT)) {
+                        $ref = '&mut ';
+                        $this->pos++;
+                    }
+                }
+                $ptype = $ref . $this->expect(Token::IDENT)->value;
+                $params[] = ['name' => $pname, 'type' => $ptype];
             }
-            $ptype = $ref . $this->expect(Token::IDENT)->value;
-            $params[] = ['name' => $pname, 'type' => $ptype];
             if ($this->check(Token::COMMA)) {
                 $this->pos++;
             }
@@ -426,7 +455,7 @@ class Parser {
             return new BoolLitNode(false, $token->line);
         }
 
-        if ($token->type === Token::IDENT) {
+        if ($token->type === Token::IDENT || $token->type === Token::SELF) {
             $this->pos++;
             if ($this->check(Token::DCOLON)) {
                 $this->expect(Token::DCOLON);
@@ -437,9 +466,17 @@ class Parser {
                     $this->expect(Token::RPAREN);
                     return new StringFromNode($str, $token->line);
                 }
-                throw new RuntimeException(
-                    "Unknown static method {$token->value}::$method on line {$token->line}"
-                );
+                
+                $this->expect(Token::LPAREN);
+                $args = [];
+                while (!$this->check(Token::RPAREN)) {
+                    $args[] = $this->parseExpr();
+                    if ($this->check(Token::COMMA)) {
+                        $this->pos++;
+                    }
+                }
+                $this->expect(Token::RPAREN);
+                return new CallNode("{$token->value}::$method", $args, $token->line);
             }
 
             $expr = null;
@@ -462,8 +499,21 @@ class Parser {
 
             while ($this->check(Token::DOT)) {
                 $this->pos++;
-                $field = $this->expect(Token::IDENT)->value;
-                $expr = new FieldAccessNode($expr, $field, $expr->line);
+                $name = $this->expect(Token::IDENT)->value;
+                if ($this->check(Token::LPAREN)) {
+                    $this->pos++;
+                    $args = [];
+                    while (!$this->check(Token::RPAREN)) {
+                        $args[] = $this->parseExpr();
+                        if ($this->check(Token::COMMA)) {
+                            $this->pos++;
+                        }
+                    }
+                    $this->expect(Token::RPAREN);
+                    $expr = new MethodCallNode($expr, $name, $args, $expr->line);
+                } else {
+                    $expr = new FieldAccessNode($expr, $name, $expr->line);
+                }
             }
 
             return $expr;

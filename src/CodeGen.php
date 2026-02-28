@@ -57,10 +57,28 @@ class CodeGen {
             ];
         }
 
+        foreach ($program->impls as $impl) {
+            foreach ($impl->functions as $fn) {
+                $mangled = "{$impl->struct_name}::{$fn->name}";
+                $this->func_sigs[$mangled] = [
+                    'params'      => $fn->params,
+                    'return_type' => $fn->return_type,
+                    'struct'      => $impl->struct_name,
+                ];
+            }
+        }
+
         $this->emitEntryPoint();
 
         foreach ($program->functions as $fn) {
             $this->generateFunction($fn);
+        }
+
+        foreach ($program->impls as $impl) {
+            foreach ($impl->functions as $fn) {
+                $mangled = "{$impl->struct_name}::{$fn->name}";
+                $this->generateFunction($fn, $mangled, $impl->struct_name);
+            }
         }
 
         $this->patchCalls();
@@ -106,8 +124,11 @@ class CodeGen {
         if ($expr instanceof StructLitNode) return $expr->struct_name;
         if ($expr instanceof FieldAccessNode) {
             $obj_type = $this->exprType($expr->object);
-            if (isset($this->struct_defs[$obj_type])) {
-                foreach ($this->struct_defs[$obj_type]['fields'] as $f) {
+            $base_type = $obj_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+            if (isset($this->struct_defs[$base_type])) {
+                foreach ($this->struct_defs[$base_type]['fields'] as $f) {
                     if ($f['name'] === $expr->field_name) return $f['type'];
                 }
             }
@@ -148,11 +169,20 @@ class CodeGen {
             }
             return 'i32';
         }
+        if ($expr instanceof MethodCallNode) {
+            $receiver_type = $this->exprType($expr->receiver);
+            $base_type = $receiver_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+            $mangled = "$base_type::{$expr->method_name}";
+            return $this->func_sigs[$mangled]['return_type'] ?? 'i32';
+        }
         return 'i32';
     }
 
-    private function generateFunction(FunctionNode $fn): void {
-        $this->func_addrs[$fn->name] = $this->asm->pos();
+    private function generateFunction(FunctionNode $fn, ?string $mangled_name = null, ?string $struct_name = null): void {
+        $name = $mangled_name ?? $fn->name;
+        $this->func_addrs[$name] = $this->asm->pos();
         $this->vars = [];
         $this->stack_size = 0;
         $this->return_patches = [];
@@ -160,14 +190,18 @@ class CodeGen {
 
         $reg_idx = 0;
         foreach ($fn->params as $param) {
-            $size = ($param['type'] === 'String') ? 16 : 8;
+            $ptype = $param['type'];
+            if ($struct_name !== null) {
+                $ptype = str_replace('self', $struct_name, $ptype);
+            }
+            $size = ($ptype === 'String') ? 16 : 8;
             $this->stack_size += $size;
             $this->vars[$param['name']] = [
                 'offset'  => $this->stack_size,
-                'type'    => $param['type'],
+                'type'    => $ptype,
                 'reg_idx' => $reg_idx,
             ];
-            $reg_idx += ($param['type'] === 'String') ? 2 : 1;
+            $reg_idx += ($ptype === 'String') ? 2 : 1;
         }
 
         $param_vars = $this->vars;
@@ -261,7 +295,7 @@ class CodeGen {
             } else {
                 $this->generateExpr($stmt->value);
                 $this->asm->store(X86::RBP, -$slot['offset'], X86::RAX);
-                if ($slot['type'] === 'String') {
+                if ($slot['type'] === 'String' || isset($this->struct_defs[$slot['type']])) {
                     $this->asm->store(X86::RBP, -($slot['offset'] - 8), X86::RDX);
                 }
             }
@@ -285,9 +319,21 @@ class CodeGen {
             $this->generateExpr($stmt->value);
             if ($stmt->object instanceof IdentNode) {
                 $var = $this->vars[$stmt->object->name];
-                $sd = $this->struct_defs[$var['type']];
+                $var_type = $var['type'];
+                $is_ref = str_starts_with($var_type, '&mut ') || str_starts_with($var_type, '&');
+                $base_type = $var_type;
+                if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+                elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+                $sd = $this->struct_defs[$base_type];
                 $field_off = $sd['field_offsets'][$stmt->field_name];
-                $this->asm->store(X86::RBP, -($var['offset'] - $field_off), X86::RAX);
+                if ($is_ref) {
+                    $this->asm->push(X86::RAX);
+                    $this->asm->load(X86::RCX, X86::RBP, -$var['offset']);
+                    $this->asm->pop(X86::RAX);
+                    $this->asm->store(X86::RCX, $field_off, X86::RAX);
+                } else {
+                    $this->asm->store(X86::RBP, -($var['offset'] - $field_off), X86::RAX);
+                }
             }
             return;
         }
@@ -499,6 +545,21 @@ class CodeGen {
             return;
         }
 
+        if ($expr instanceof StructLitNode) {
+            $sd = $this->struct_defs[$expr->struct_name];
+            $fields = $expr->fields;
+            if (count($fields) >= 1) {
+                $this->generateExpr($fields[0]['value']);
+                if (count($fields) >= 2) {
+                    $this->asm->push(X86::RAX);
+                    $this->generateExpr($fields[1]['value']);
+                    $this->asm->mov(X86::RDX, X86::RAX);
+                    $this->asm->pop(X86::RAX);
+                }
+            }
+            return;
+        }
+
         if ($expr instanceof IdentNode) {
             if (!isset($this->vars[$expr->name])) {
                 throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
@@ -511,7 +572,12 @@ class CodeGen {
                 $this->asm->load(X86::RDX, X86::RAX, 8);
                 $this->asm->load(X86::RAX, X86::RAX, 0);
             } elseif (str_starts_with($var['type'], '&')) {
-                $this->asm->load(X86::RAX, X86::RAX, 0);
+                $inner = $var['type'];
+                if (str_starts_with($inner, '&mut ')) $inner = substr($inner, 5);
+                else $inner = substr($inner, 1);
+                if (!isset($this->struct_defs[$inner])) {
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                }
             }
             return;
         }
@@ -519,9 +585,19 @@ class CodeGen {
         if ($expr instanceof FieldAccessNode) {
             if ($expr->object instanceof IdentNode) {
                 $var = $this->vars[$expr->object->name];
-                $sd = $this->struct_defs[$var['type']];
+                $var_type = $var['type'];
+                $is_ref = str_starts_with($var_type, '&mut ') || str_starts_with($var_type, '&');
+                $base_type = $var_type;
+                if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+                elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+                $sd = $this->struct_defs[$base_type];
                 $field_off = $sd['field_offsets'][$expr->field_name];
-                $this->asm->load(X86::RAX, X86::RBP, -($var['offset'] - $field_off));
+                if ($is_ref) {
+                    $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
+                    $this->asm->load(X86::RAX, X86::RAX, $field_off);
+                } else {
+                    $this->asm->load(X86::RAX, X86::RBP, -($var['offset'] - $field_off));
+                }
             }
             return;
         }
@@ -663,6 +739,70 @@ class CodeGen {
 
             $patch_pos = $this->asm->call_rel32();
             $this->call_patches[] = [$patch_pos, $expr->name];
+            return;
+        }
+
+        if ($expr instanceof MethodCallNode) {
+            $receiver_type = $this->exprType($expr->receiver);
+            $base_type = $receiver_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+
+            $mangled = "$base_type::{$expr->method_name}";
+            $sig = $this->func_sigs[$mangled];
+
+            $n = count($expr->args);
+            $total_args = $n + 1;
+            if ($total_args > 6) {
+                throw new RuntimeException("Methods with more than 6 total arguments are not supported on line {$expr->line}");
+            }
+
+            $reg_idx = 0;
+            $arg_reg_map = [];
+            for ($i = 0; $i < $total_args; $i++) {
+                $ptype = str_replace('self', $base_type, $sig['params'][$i]['type']);
+                $arg_reg_map[$i] = ['reg_idx' => $reg_idx, 'type' => $ptype];
+                $reg_idx += ($ptype === 'String') ? 2 : 1;
+            }
+
+            // Receiver (arg 0)
+            $self_param_type = $arg_reg_map[0]['type'];
+            if ($self_param_type === "&$base_type" && $receiver_type === $base_type) {
+                if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow only supported for variables on line {$expr->line}");
+                $var = $this->vars[$expr->receiver->name];
+                $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
+            } elseif ($self_param_type === "&mut $base_type" && $receiver_type === $base_type) {
+                if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow-mut only supported for variables on line {$expr->line}");
+                $var = $this->vars[$expr->receiver->name];
+                $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
+            } else {
+                $this->generateExpr($expr->receiver);
+            }
+            if ($arg_reg_map[0]['type'] === 'String') {
+                $this->asm->push(X86::RDX);
+            }
+            $this->asm->push(X86::RAX);
+
+            // Other args
+            for ($i = 0; $i < $n; $i++) {
+                $this->generateExpr($expr->args[$i]);
+                if ($arg_reg_map[$i + 1]['type'] === 'String') {
+                    $this->asm->push(X86::RDX);
+                }
+                $this->asm->push(X86::RAX);
+            }
+
+            // Pop into regs
+            for ($i = $total_args - 1; $i >= 0; $i--) {
+                $ri = $arg_reg_map[$i]['reg_idx'];
+                $this->asm->pop(self::ARG_REGS[$ri]);
+                if ($arg_reg_map[$i]['type'] === 'String') {
+                    $this->asm->pop(self::ARG_REGS[$ri + 1]);
+                }
+            }
+
+            $patch_pos = $this->asm->call_rel32();
+            $this->call_patches[] = [$patch_pos, $mangled];
             return;
         }
 
