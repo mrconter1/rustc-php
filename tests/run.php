@@ -1,0 +1,79 @@
+<?php
+
+$cases_dir  = __DIR__ . '/cases';
+$rustc      = __DIR__ . '/../rustc.php';
+$tmp_binary = __DIR__ . '/../test_out';
+
+$files = glob($cases_dir . '/*.rs');
+sort($files);
+
+$passed = 0;
+$failed = 0;
+
+foreach ($files as $file) {
+    $name   = basename($file);
+    $header = parseHeader($file);
+
+    if (isset($header['exit'])) {
+        $result = runExitTest($file, (int)$header['exit'], $rustc, $tmp_binary);
+    } elseif (isset($header['error'])) {
+        $result = runErrorTest($file, $header['error'], $rustc, $tmp_binary);
+    } else {
+        echo "SKIP  $name — no test header\n";
+        continue;
+    }
+
+    if ($result === true) {
+        echo "PASS  $name\n";
+        $passed++;
+    } else {
+        echo "FAIL  $name — $result\n";
+        $failed++;
+    }
+}
+
+@unlink($tmp_binary);
+
+echo "\n$passed passed, $failed failed\n";
+exit($failed > 0 ? 1 : 0);
+
+function parseHeader(string $file): array {
+    $lines  = file($file);
+    $header = [];
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (!str_starts_with($line, '//')) break;
+        if (preg_match('/^\/\/\s*exit:\s*(\d+)/', $line, $m)) {
+            $header['exit'] = $m[1];
+        }
+        if (preg_match('/^\/\/\s*error:\s*(.+)/', $line, $m)) {
+            $header['error'] = trim($m[1]);
+        }
+    }
+    return $header;
+}
+
+function runExitTest(string $file, int $expected_exit, string $rustc, string $binary): string|true {
+    exec("php \"$rustc\" \"$file\" -o \"$binary\" 2>&1", $compile_out, $compile_code);
+    if ($compile_code !== 0) {
+        return "compilation failed: " . implode(' ', $compile_out);
+    }
+
+    exec("wsl ./test_out 2>&1", $run_out, $actual_exit);
+    if ($actual_exit !== $expected_exit) {
+        return "expected exit $expected_exit, got $actual_exit";
+    }
+    return true;
+}
+
+function runErrorTest(string $file, string $expected_error, string $rustc, string $binary): string|true {
+    exec("php \"$rustc\" \"$file\" -o \"$binary\" 2>&1", $compile_out, $compile_code);
+    if ($compile_code === 0) {
+        return "expected compilation error, but compiled successfully";
+    }
+    $output = implode(' ', $compile_out);
+    if (stripos($output, $expected_error) === false) {
+        return "expected error containing '$expected_error', got: $output";
+    }
+    return true;
+}
