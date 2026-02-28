@@ -92,6 +92,10 @@ class Parser {
             return new AssignNode($expr->name, $value, $line);
         }
 
+        if ($this->check(Token::RBRACE)) {
+            return new ReturnNode($expr, $expr->line);
+        }
+
         $this->expect(Token::SEMICOLON);
         return new ExprStmtNode($expr, $expr->line);
     }
