@@ -3,9 +3,18 @@
 require_once __DIR__ . '/Ast.php';
 
 class OwnershipChecker {
-    private array $vars = []; // name => ['type', 'state', 'mutable', 'moved_to', 'moved_line']
+    private array $vars = [];
+    private array $func_sigs = []; // name => ['params' => [...], 'return_type' => string|null]
+    private ?string $current_return_type = null;
 
     public function check(ProgramNode $program): void {
+        foreach ($program->functions as $fn) {
+            $this->func_sigs[$fn->name] = [
+                'params' => $fn->params,
+                'return_type' => $fn->return_type,
+            ];
+        }
+
         foreach ($program->functions as $fn) {
             $this->checkFunction($fn);
         }
@@ -13,6 +22,7 @@ class OwnershipChecker {
 
     private function checkFunction(FunctionNode $fn): void {
         $this->vars = [];
+        $this->current_return_type = $fn->return_type;
         foreach ($fn->params as $param) {
             $this->vars[$param['name']] = [
                 'type' => $param['type'],
@@ -35,7 +45,14 @@ class OwnershipChecker {
         if ($stmt instanceof LetNode) {
             $this->checkExpr($stmt->value);
 
-            $type = $stmt->type_name ?? $this->exprType($stmt->value);
+            $expr_type = $this->exprType($stmt->value);
+            $type = $stmt->type_name ?? $expr_type;
+
+            if ($stmt->type_name !== null && $stmt->type_name !== $expr_type) {
+                throw new RuntimeException(
+                    "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' on line {$stmt->line}"
+                );
+            }
 
             if ($stmt->value instanceof IdentNode && !$this->isCopy($type)) {
                 $src = $stmt->value->name;
@@ -69,8 +86,14 @@ class OwnershipChecker {
 
             $this->checkExpr($stmt->value);
 
-            $type = $this->exprType($stmt->value);
-            if ($stmt->value instanceof IdentNode && !$this->isCopy($type)) {
+            $expr_type = $this->exprType($stmt->value);
+            if ($var['type'] !== $expr_type) {
+                throw new RuntimeException(
+                    "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}' on line {$stmt->line}"
+                );
+            }
+
+            if ($stmt->value instanceof IdentNode && !$this->isCopy($expr_type)) {
                 $src = $stmt->value->name;
                 if (isset($this->vars[$src])) {
                     $this->vars[$src]['state'] = 'moved';
@@ -89,6 +112,15 @@ class OwnershipChecker {
 
         if ($stmt instanceof ReturnNode) {
             $this->checkExpr($stmt->value);
+
+            if ($this->current_return_type !== null) {
+                $expr_type = $this->exprType($stmt->value);
+                if ($expr_type !== $this->current_return_type) {
+                    throw new RuntimeException(
+                        "Type mismatch: expected return type '{$this->current_return_type}', got '$expr_type' on line {$stmt->line}"
+                    );
+                }
+            }
             return;
         }
 
@@ -175,6 +207,26 @@ class OwnershipChecker {
             foreach ($expr->args as $arg) {
                 $this->checkExpr($arg);
             }
+
+            if ($expr->name !== 'exit' && isset($this->func_sigs[$expr->name])) {
+                $sig = $this->func_sigs[$expr->name];
+                $expected = count($sig['params']);
+                $got = count($expr->args);
+                if ($got !== $expected) {
+                    throw new RuntimeException(
+                        "Function '{$expr->name}' expects $expected arguments, got $got on line {$expr->line}"
+                    );
+                }
+                foreach ($expr->args as $i => $arg) {
+                    $arg_type = $this->exprType($arg);
+                    $param_type = $sig['params'][$i]['type'];
+                    if ($arg_type !== $param_type) {
+                        throw new RuntimeException(
+                            "Type mismatch: argument " . ($i + 1) . " of '{$expr->name}' expects '$param_type', got '$arg_type' on line {$expr->line}"
+                        );
+                    }
+                }
+            }
             return;
         }
     }
@@ -202,7 +254,29 @@ class OwnershipChecker {
         if ($expr instanceof IdentNode) {
             return $this->vars[$expr->name]['type'] ?? 'i32';
         }
-        if ($expr instanceof BinaryOpNode) return 'i32';
+        if ($expr instanceof BorrowNode) {
+            if ($expr->operand instanceof IdentNode) {
+                $inner = $this->vars[$expr->operand->name]['type'] ?? 'i32';
+                return '&' . $inner;
+            }
+            return '&i32';
+        }
+        if ($expr instanceof UnaryOpNode) {
+            if ($expr->op === '!') return 'bool';
+            return $this->exprType($expr->operand);
+        }
+        if ($expr instanceof CallNode) {
+            if (isset($this->func_sigs[$expr->name])) {
+                return $this->func_sigs[$expr->name]['return_type'] ?? 'i32';
+            }
+            return 'i32';
+        }
+        if ($expr instanceof BinaryOpNode) {
+            if (in_array($expr->op, ['==', '!=', '<', '>', '<=', '>=', '&&', '||'])) {
+                return 'bool';
+            }
+            return 'i32';
+        }
         return 'i32';
     }
 }
