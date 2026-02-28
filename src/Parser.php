@@ -8,6 +8,7 @@ class Parser {
     private array $tokens;
     private int   $pos = 0;
     private array $struct_names = [];
+    private array $enum_names   = [];
 
     public function __construct(array $tokens) {
         $this->tokens = $tokens;
@@ -23,6 +24,13 @@ class Parser {
                     $this->pos++;
                 }
                 if ($this->check(Token::RBRACE)) $this->pos++;
+            } elseif ($this->check(Token::ENUM)) {
+                $this->pos++;
+                $this->enum_names[] = $this->expect(Token::IDENT)->value;
+                while (!$this->check(Token::RBRACE) && !$this->check(Token::EOF)) {
+                    $this->pos++;
+                }
+                if ($this->check(Token::RBRACE)) $this->pos++;
             } else {
                 $this->pos++;
             }
@@ -30,18 +38,93 @@ class Parser {
         $this->pos = $saved;
 
         $functions = [];
-        $structs = [];
-        $impls = [];
+        $structs   = [];
+        $impls     = [];
+        $enums     = [];
         while (!$this->check(Token::EOF)) {
             if ($this->check(Token::STRUCT)) {
                 $structs[] = $this->parseStruct();
+            } elseif ($this->check(Token::ENUM)) {
+                $enums[] = $this->parseEnum();
             } elseif ($this->check(Token::IMPL)) {
                 $impls[] = $this->parseImpl();
             } else {
                 $functions[] = $this->parseFunction();
             }
         }
-        return new ProgramNode($functions, $structs, $impls);
+        return new ProgramNode($functions, $structs, $impls, $enums);
+    }
+
+    private function parseEnum(): EnumDefNode {
+        $line = $this->expect(Token::ENUM)->line;
+        $name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::LBRACE);
+        $variants = [];
+        while (!$this->check(Token::RBRACE)) {
+            $vname  = $this->expect(Token::IDENT)->value;
+            $fields = [];
+            if ($this->check(Token::LPAREN)) {
+                $this->pos++;
+                while (!$this->check(Token::RPAREN)) {
+                    $ref = '';
+                    if ($this->check(Token::AMP)) {
+                        $ref = '&';
+                        $this->pos++;
+                        if ($this->check(Token::MUT)) { $ref = '&mut '; $this->pos++; }
+                    }
+                    $fields[] = $ref . $this->expect(Token::IDENT)->value;
+                    if ($this->check(Token::COMMA)) $this->pos++;
+                }
+                $this->expect(Token::RPAREN);
+            }
+            $variants[] = ['name' => $vname, 'fields' => $fields];
+            if ($this->check(Token::COMMA)) $this->pos++;
+        }
+        $this->expect(Token::RBRACE);
+        return new EnumDefNode($name, $variants, $line);
+    }
+
+    private function parseMatch(): MatchNode {
+        $line    = $this->expect(Token::MATCH)->line;
+        $subject = $this->parseExpr();
+        $this->expect(Token::LBRACE);
+        $arms = [];
+        while (!$this->check(Token::RBRACE)) {
+            $pat_token   = $this->current();
+            $is_wildcard = false;
+            $enum_name   = null;
+            $variant_name = null;
+            $binding     = null;
+
+            if ($pat_token->type === Token::IDENT && $pat_token->value === '_') {
+                $this->pos++;
+                $is_wildcard = true;
+            } else {
+                $enum_name    = $this->expect(Token::IDENT)->value;
+                $this->expect(Token::DCOLON);
+                $variant_name = $this->expect(Token::IDENT)->value;
+                if ($this->check(Token::LPAREN)) {
+                    $this->pos++;
+                    $binding = $this->expect(Token::IDENT)->value;
+                    $this->expect(Token::RPAREN);
+                }
+            }
+
+            $this->expect(Token::FAT_ARROW);
+
+            if ($this->check(Token::LBRACE)) {
+                $body = $this->parseBlock();
+            } else {
+                $expr = $this->parseExpr();
+                $body = [new ReturnNode($expr, $expr->line)];
+                if ($this->check(Token::COMMA)) $this->pos++;
+            }
+
+            $arms[] = new MatchArmNode($is_wildcard, $enum_name, $variant_name, $binding, $body, $pat_token->line);
+            if (!$is_wildcard && $this->check(Token::COMMA)) $this->pos++;
+        }
+        $this->expect(Token::RBRACE);
+        return new MatchNode($subject, $arms, $line);
     }
 
     private function parseImpl(): ImplNode {
@@ -172,6 +255,11 @@ class Parser {
         }
         if ($this->check(Token::MACRO)) {
             return $this->parseMacroCall();
+        }
+        if ($this->check(Token::MATCH)) {
+            $node = $this->parseMatch();
+            if ($this->check(Token::SEMICOLON)) $this->pos++;
+            return $node;
         }
         $expr = $this->parseExpr();
 
@@ -455,8 +543,26 @@ class Parser {
             return new BoolLitNode(false, $token->line);
         }
 
+        if ($token->type === Token::MATCH) {
+            return $this->parseMatch();
+        }
+
         if ($token->type === Token::IDENT || $token->type === Token::SELF) {
             $this->pos++;
+            if ($this->check(Token::DCOLON) && in_array($token->value, $this->enum_names)) {
+                $this->expect(Token::DCOLON);
+                $variant_name = $this->expect(Token::IDENT)->value;
+                $args = [];
+                if ($this->check(Token::LPAREN)) {
+                    $this->pos++;
+                    while (!$this->check(Token::RPAREN)) {
+                        $args[] = $this->parseExpr();
+                        if ($this->check(Token::COMMA)) $this->pos++;
+                    }
+                    $this->expect(Token::RPAREN);
+                }
+                return new EnumVariantNode($token->value, $variant_name, $args, $token->line);
+            }
             if ($this->check(Token::DCOLON)) {
                 $this->expect(Token::DCOLON);
                 $method = $this->expect(Token::IDENT)->value;
@@ -466,7 +572,7 @@ class Parser {
                     $this->expect(Token::RPAREN);
                     return new StringFromNode($str, $token->line);
                 }
-                
+
                 $this->expect(Token::LPAREN);
                 $args = [];
                 while (!$this->check(Token::RPAREN)) {

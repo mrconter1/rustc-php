@@ -17,6 +17,9 @@ class Token {
     const FALSE    = 'FALSE';
     const IMPL     = 'IMPL';
     const SELF     = 'SELF';
+    const ENUM     = 'ENUM';
+    const MATCH    = 'MATCH';
+    const FAT_ARROW = 'FAT_ARROW'; // =>
 
     // Literals
     const INT_LIT = 'INT_LIT';

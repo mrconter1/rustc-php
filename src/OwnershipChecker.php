@@ -6,6 +6,7 @@ class OwnershipChecker {
     private array $vars = [];
     private array $func_sigs = [];
     private array $struct_defs = [];
+    private array $enum_defs   = [];
     private ?string $current_return_type = null;
 
     public function check(ProgramNode $program): void {
@@ -20,6 +21,24 @@ class OwnershipChecker {
                 'fields' => $sd->fields,
                 'size' => $size,
                 'field_offsets' => $field_offsets,
+            ];
+        }
+
+        foreach ($program->enums as $ed) {
+            $discriminant  = 0;
+            $has_payload   = false;
+            $variants_map  = [];
+            foreach ($ed->variants as $v) {
+                $variants_map[$v['name']] = [
+                    'discriminant' => $discriminant++,
+                    'fields'       => $v['fields'],
+                ];
+                if (!empty($v['fields'])) $has_payload = true;
+            }
+            $this->enum_defs[$ed->name] = [
+                'variants'    => $variants_map,
+                'has_payload' => $has_payload,
+                'size'        => $has_payload ? 16 : 8,
             ];
         }
 
@@ -249,6 +268,41 @@ class OwnershipChecker {
             return;
         }
 
+        if ($stmt instanceof MatchNode) {
+            $this->checkExpr($stmt->subject);
+            $subject_type = $this->exprType($stmt->subject);
+            $base_type = $subject_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+
+            if (!isset($this->enum_defs[$base_type])) {
+                throw new RuntimeException("Cannot match on non-enum type '$base_type' on line {$stmt->line}");
+            }
+
+            $saved = $this->vars;
+            foreach ($stmt->arms as $arm) {
+                $this->vars = $saved;
+                if (!$arm->is_wildcard) {
+                    if (!isset($this->enum_defs[$base_type]['variants'][$arm->variant_name])) {
+                        throw new RuntimeException("Enum '$base_type' has no variant '{$arm->variant_name}' on line {$arm->line}");
+                    }
+                    if ($arm->binding !== null) {
+                        $field_type = $this->enum_defs[$base_type]['variants'][$arm->variant_name]['fields'][0] ?? 'i32';
+                        $this->vars[$arm->binding] = [
+                            'type'       => $field_type,
+                            'state'      => 'owned',
+                            'mutable'    => false,
+                            'moved_to'   => null,
+                            'moved_line' => null,
+                        ];
+                    }
+                }
+                $this->checkBody($arm->body);
+            }
+            $this->vars = $this->mergeStates($saved, $this->vars);
+            return;
+        }
+
         if ($stmt instanceof IfNode) {
             $this->checkExpr($stmt->condition);
 
@@ -294,6 +348,24 @@ class OwnershipChecker {
             foreach ($expr->fields as $f) {
                 $this->checkExpr($f['value']);
             }
+            return;
+        }
+
+        if ($expr instanceof EnumVariantNode) {
+            foreach ($expr->args as $arg) {
+                $this->checkExpr($arg);
+            }
+            if (!isset($this->enum_defs[$expr->enum_name])) {
+                throw new RuntimeException("Undefined enum '{$expr->enum_name}' on line {$expr->line}");
+            }
+            if (!isset($this->enum_defs[$expr->enum_name]['variants'][$expr->variant_name])) {
+                throw new RuntimeException("Enum '{$expr->enum_name}' has no variant '{$expr->variant_name}' on line {$expr->line}");
+            }
+            return;
+        }
+
+        if ($expr instanceof MatchNode) {
+            $this->checkStmt($expr);
             return;
         }
 
@@ -434,6 +506,7 @@ class OwnershipChecker {
         if (str_starts_with($type, '&mut ')) return false;
         if (str_starts_with($type, '&')) return true;
         if (in_array($type, ['i32', 'bool'])) return true;
+        if (isset($this->enum_defs[$type])) return true;
         if (isset($this->struct_defs[$type])) {
             foreach ($this->struct_defs[$type]['fields'] as $f) {
                 if (!$this->isCopy($f['type'])) return false;
@@ -448,6 +521,18 @@ class OwnershipChecker {
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
         if ($expr instanceof StructLitNode) return $expr->struct_name;
+        if ($expr instanceof EnumVariantNode) return $expr->enum_name;
+        if ($expr instanceof MatchNode) {
+            foreach ($expr->arms as $arm) {
+                if (!empty($arm->body)) {
+                    $last = end($arm->body);
+                    if ($last instanceof ReturnNode && $last->value !== null) {
+                        return $this->exprType($last->value);
+                    }
+                }
+            }
+            return 'i32';
+        }
         if ($expr instanceof FieldAccessNode) {
             $obj_type = $this->exprType($expr->object);
             $base_type = $obj_type;

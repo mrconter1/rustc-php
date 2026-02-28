@@ -4,10 +4,64 @@ class ProgramNode {
     public array $functions;
     public array $structs;
     public array $impls;
-    public function __construct(array $functions, array $structs = [], array $impls = []) {
+    public array $enums;
+    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = []) {
         $this->functions = $functions;
         $this->structs   = $structs;
         $this->impls     = $impls;
+        $this->enums     = $enums;
+    }
+}
+
+class EnumDefNode {
+    public string $name;
+    public array  $variants; // [['name' => string, 'fields' => [string, ...]], ...]
+    public int    $line;
+    public function __construct(string $name, array $variants, int $line) {
+        $this->name     = $name;
+        $this->variants = $variants;
+        $this->line     = $line;
+    }
+}
+
+class EnumVariantNode {
+    public string $enum_name;
+    public string $variant_name;
+    public array  $args;
+    public int    $line;
+    public function __construct(string $enum_name, string $variant_name, array $args, int $line) {
+        $this->enum_name    = $enum_name;
+        $this->variant_name = $variant_name;
+        $this->args         = $args;
+        $this->line         = $line;
+    }
+}
+
+class MatchArmNode {
+    public bool    $is_wildcard;
+    public ?string $enum_name;
+    public ?string $variant_name;
+    public ?string $binding;
+    public array   $body;
+    public int     $line;
+    public function __construct(bool $is_wildcard, ?string $enum_name, ?string $variant_name, ?string $binding, array $body, int $line) {
+        $this->is_wildcard    = $is_wildcard;
+        $this->enum_name      = $enum_name;
+        $this->variant_name   = $variant_name;
+        $this->binding        = $binding;
+        $this->body           = $body;
+        $this->line           = $line;
+    }
+}
+
+class MatchNode {
+    public mixed $subject;
+    public array $arms;
+    public int   $line;
+    public function __construct(mixed $subject, array $arms, int $line) {
+        $this->subject = $subject;
+        $this->arms    = $arms;
+        $this->line    = $line;
     }
 }
 

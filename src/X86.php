@@ -218,6 +218,14 @@ class X86 {
         return $pos;
     }
 
+    // jne rel32 (jump if not equal / not zero) — returns patch position
+    public function jne_rel32(): int {
+        $this->emit("\x0F\x85");
+        $pos = strlen($this->buffer);
+        $this->emit("\x00\x00\x00\x00");
+        return $pos;
+    }
+
     // jmp rel32 — returns position of the 4-byte offset for patching
     public function jmp_rel32(): int {
         $this->emit("\xE9");

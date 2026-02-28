@@ -15,10 +15,13 @@ class CodeGen {
     private array $func_addrs = [];
     private array $func_sigs = [];
     private array $struct_defs = [];
+    private array $enum_defs   = [];
     private array $call_patches = [];
     private array $return_patches = [];
     private array $let_slots = [];
     private array $loop_stack = [];
+    private array $match_subject_slots = [];
+    private array $match_binding_slots  = [];
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
@@ -47,6 +50,24 @@ class CodeGen {
                 'fields' => $sd->fields,
                 'size' => $size,
                 'field_offsets' => $field_offsets,
+            ];
+        }
+
+        foreach ($program->enums as $ed) {
+            $discriminant = 0;
+            $has_payload  = false;
+            $variants_map = [];
+            foreach ($ed->variants as $v) {
+                $variants_map[$v['name']] = [
+                    'discriminant' => $discriminant++,
+                    'fields'       => $v['fields'],
+                ];
+                if (!empty($v['fields'])) $has_payload = true;
+            }
+            $this->enum_defs[$ed->name] = [
+                'variants'    => $variants_map,
+                'has_payload' => $has_payload,
+                'size'        => $has_payload ? 16 : 8,
             ];
         }
 
@@ -117,11 +138,29 @@ class CodeGen {
         return $offset;
     }
 
+    private function isFatType(string $type): bool {
+        if ($type === 'String') return true;
+        if (isset($this->enum_defs[$type]) && $this->enum_defs[$type]['has_payload']) return true;
+        return false;
+    }
+
     private function exprType(mixed $expr): string {
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
         if ($expr instanceof StructLitNode) return $expr->struct_name;
+        if ($expr instanceof EnumVariantNode) return $expr->enum_name;
+        if ($expr instanceof MatchNode) {
+            foreach ($expr->arms as $arm) {
+                if (!empty($arm->body)) {
+                    $last = end($arm->body);
+                    if ($last instanceof ReturnNode && $last->value !== null) {
+                        return $this->exprType($last->value);
+                    }
+                }
+            }
+            return 'i32';
+        }
         if ($expr instanceof FieldAccessNode) {
             $obj_type = $this->exprType($expr->object);
             $base_type = $obj_type;
@@ -194,14 +233,14 @@ class CodeGen {
             if ($struct_name !== null) {
                 $ptype = str_replace('self', $struct_name, $ptype);
             }
-            $size = ($ptype === 'String') ? 16 : 8;
+            $size = $this->isFatType($ptype) ? 16 : 8;
             $this->stack_size += $size;
             $this->vars[$param['name']] = [
                 'offset'  => $this->stack_size,
                 'type'    => $ptype,
                 'reg_idx' => $reg_idx,
             ];
-            $reg_idx += ($ptype === 'String') ? 2 : 1;
+            $reg_idx += $this->isFatType($ptype) ? 2 : 1;
         }
 
         $param_vars = $this->vars;
@@ -220,10 +259,11 @@ class CodeGen {
         }
 
         foreach ($fn->params as $param) {
-            $var = $this->vars[$param['name']];
-            $ri = $var['reg_idx'];
+            $var   = $this->vars[$param['name']];
+            $ptype = $var['type'];
+            $ri    = $var['reg_idx'];
             $this->asm->store(X86::RBP, -$var['offset'], self::ARG_REGS[$ri]);
-            if ($param['type'] === 'String') {
+            if ($this->isFatType($ptype)) {
                 $this->asm->store(X86::RBP, -($var['offset'] - 8), self::ARG_REGS[$ri + 1]);
             }
         }
@@ -247,10 +287,12 @@ class CodeGen {
             if ($stmt instanceof LetNode) {
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
                 $size = 8;
-                if ($type === 'String') {
+                if ($this->isFatType($type)) {
                     $size = 16;
                 } elseif (isset($this->struct_defs[$type])) {
                     $size = $this->struct_defs[$type]['size'];
+                } elseif (isset($this->enum_defs[$type])) {
+                    $size = $this->enum_defs[$type]['size'];
                 }
                 $this->stack_size += $size;
                 $slot = [
@@ -271,6 +313,23 @@ class CodeGen {
             }
             if ($stmt instanceof LoopNode) {
                 $this->collectVars($stmt->body);
+            }
+            if ($stmt instanceof MatchNode) {
+                $subject_type = $this->exprType($stmt->subject);
+                $has_payload  = isset($this->enum_defs[$subject_type]) && $this->enum_defs[$subject_type]['has_payload'];
+                $this->stack_size += 16; // always 16: tag + potential payload
+                $this->match_subject_slots[spl_object_id($stmt)] = [
+                    'offset'      => $this->stack_size,
+                    'has_payload' => $has_payload,
+                    'enum_type'   => $subject_type,
+                ];
+                foreach ($stmt->arms as $arm) {
+                    if ($arm->binding !== null) {
+                        $this->stack_size += 8;
+                        $this->match_binding_slots[spl_object_id($arm)] = ['offset' => $this->stack_size];
+                    }
+                    $this->collectVars($arm->body);
+                }
             }
         }
     }
@@ -295,7 +354,7 @@ class CodeGen {
             } else {
                 $this->generateExpr($stmt->value);
                 $this->asm->store(X86::RBP, -$slot['offset'], X86::RAX);
-                if ($slot['type'] === 'String' || isset($this->struct_defs[$slot['type']])) {
+                if ($this->isFatType($slot['type']) || isset($this->struct_defs[$slot['type']])) {
                     $this->asm->store(X86::RBP, -($slot['offset'] - 8), X86::RDX);
                 }
             }
@@ -342,7 +401,7 @@ class CodeGen {
             $this->generateExpr($stmt->value);
             $var = $this->vars[$stmt->name];
             $this->asm->store(X86::RBP, -$var['offset'], X86::RAX);
-            if ($var['type'] === 'String') {
+            if ($this->isFatType($var['type'])) {
                 $this->asm->store(X86::RBP, -($var['offset'] - 8), X86::RDX);
             }
             return;
@@ -397,6 +456,11 @@ class CodeGen {
 
         if ($stmt instanceof ExprStmtNode) {
             $this->generateExpr($stmt->expr);
+            return;
+        }
+
+        if ($stmt instanceof MatchNode) {
+            $this->generateMatch($stmt, false);
             return;
         }
 
@@ -571,14 +635,39 @@ class CodeGen {
             } elseif ($var['type'] === '&String' || $var['type'] === '&mut String') {
                 $this->asm->load(X86::RDX, X86::RAX, 8);
                 $this->asm->load(X86::RAX, X86::RAX, 0);
+            } elseif ($this->isFatType($var['type'])) {
+                $this->asm->load(X86::RDX, X86::RBP, -($var['offset'] - 8));
             } elseif (str_starts_with($var['type'], '&')) {
                 $inner = $var['type'];
                 if (str_starts_with($inner, '&mut ')) $inner = substr($inner, 5);
                 else $inner = substr($inner, 1);
-                if (!isset($this->struct_defs[$inner])) {
+                if (!isset($this->struct_defs[$inner]) && !isset($this->enum_defs[$inner])) {
                     $this->asm->load(X86::RAX, X86::RAX, 0);
                 }
             }
+            return;
+        }
+
+        if ($expr instanceof EnumVariantNode) {
+            $enum_def    = $this->enum_defs[$expr->enum_name];
+            $variant_def = $enum_def['variants'][$expr->variant_name];
+            $discriminant = $variant_def['discriminant'];
+            $has_field    = !empty($variant_def['fields']);
+            if ($has_field && !empty($expr->args)) {
+                $this->generateExpr($expr->args[0]);
+                $this->asm->mov(X86::RDX, X86::RAX);
+                $this->asm->mov_imm32(X86::RAX, $discriminant);
+            } else {
+                $this->asm->mov_imm32(X86::RAX, $discriminant);
+                if ($enum_def['has_payload']) {
+                    $this->asm->mov_imm32(X86::RDX, 0);
+                }
+            }
+            return;
+        }
+
+        if ($expr instanceof MatchNode) {
+            $this->generateMatch($expr, true);
             return;
         }
 
@@ -719,12 +808,12 @@ class CodeGen {
             for ($i = 0; $i < $n; $i++) {
                 $ptype = $sig ? $sig['params'][$i]['type'] : 'i32';
                 $param_reg_map[$i] = ['reg_idx' => $reg_idx, 'type' => $ptype];
-                $reg_idx += ($ptype === 'String') ? 2 : 1;
+                $reg_idx += $this->isFatType($ptype) ? 2 : 1;
             }
 
             for ($i = 0; $i < $n; $i++) {
                 $this->generateExpr($expr->args[$i]);
-                if ($param_reg_map[$i]['type'] === 'String') {
+                if ($this->isFatType($param_reg_map[$i]['type'])) {
                     $this->asm->push(X86::RDX);
                 }
                 $this->asm->push(X86::RAX);
@@ -732,7 +821,7 @@ class CodeGen {
             for ($i = $n - 1; $i >= 0; $i--) {
                 $ri = $param_reg_map[$i]['reg_idx'];
                 $this->asm->pop(self::ARG_REGS[$ri]);
-                if ($param_reg_map[$i]['type'] === 'String') {
+                if ($this->isFatType($param_reg_map[$i]['type'])) {
                     $this->asm->pop(self::ARG_REGS[$ri + 1]);
                 }
             }
@@ -762,7 +851,7 @@ class CodeGen {
             for ($i = 0; $i < $total_args; $i++) {
                 $ptype = str_replace('self', $base_type, $sig['params'][$i]['type']);
                 $arg_reg_map[$i] = ['reg_idx' => $reg_idx, 'type' => $ptype];
-                $reg_idx += ($ptype === 'String') ? 2 : 1;
+                $reg_idx += $this->isFatType($ptype) ? 2 : 1;
             }
 
             // Receiver (arg 0)
@@ -778,7 +867,7 @@ class CodeGen {
             } else {
                 $this->generateExpr($expr->receiver);
             }
-            if ($arg_reg_map[0]['type'] === 'String') {
+            if ($this->isFatType($arg_reg_map[0]['type'])) {
                 $this->asm->push(X86::RDX);
             }
             $this->asm->push(X86::RAX);
@@ -786,7 +875,7 @@ class CodeGen {
             // Other args
             for ($i = 0; $i < $n; $i++) {
                 $this->generateExpr($expr->args[$i]);
-                if ($arg_reg_map[$i + 1]['type'] === 'String') {
+                if ($this->isFatType($arg_reg_map[$i + 1]['type'])) {
                     $this->asm->push(X86::RDX);
                 }
                 $this->asm->push(X86::RAX);
@@ -796,7 +885,7 @@ class CodeGen {
             for ($i = $total_args - 1; $i >= 0; $i--) {
                 $ri = $arg_reg_map[$i]['reg_idx'];
                 $this->asm->pop(self::ARG_REGS[$ri]);
-                if ($arg_reg_map[$i]['type'] === 'String') {
+                if ($this->isFatType($arg_reg_map[$i]['type'])) {
                     $this->asm->pop(self::ARG_REGS[$ri + 1]);
                 }
             }
@@ -838,9 +927,79 @@ class CodeGen {
                 $this->generateExpr($stmt->value);
             } elseif ($i === $n - 1 && $stmt instanceof IfNode) {
                 $this->generateIfExpr($stmt);
+            } elseif ($i === $n - 1 && $stmt instanceof MatchNode) {
+                $this->generateMatch($stmt, true);
             } else {
                 $this->generateStmt($stmt);
             }
+        }
+    }
+
+    private function generateMatch(MatchNode $node, bool $as_expr): void {
+        $subject_slot = $this->match_subject_slots[spl_object_id($node)];
+        $enum_type    = $subject_slot['enum_type'];
+
+        $this->generateExpr($node->subject);
+        $this->asm->store(X86::RBP, -$subject_slot['offset'], X86::RAX);
+        if ($subject_slot['has_payload']) {
+            $this->asm->store(X86::RBP, -($subject_slot['offset'] - 8), X86::RDX);
+        }
+
+        $end_patches = [];
+        $pending_jne = null;
+
+        foreach ($node->arms as $arm) {
+            if ($arm->is_wildcard) continue;
+
+            if ($pending_jne !== null) {
+                $this->asm->patch32($pending_jne, $this->asm->pos() - $pending_jne - 4);
+                $pending_jne = null;
+            }
+
+            $discriminant = $this->enum_defs[$enum_type]['variants'][$arm->variant_name]['discriminant'];
+            $this->asm->load(X86::RAX, X86::RBP, -$subject_slot['offset']);
+            $this->asm->mov_imm32(X86::RCX, $discriminant);
+            $this->asm->cmp(X86::RAX, X86::RCX);
+            $pending_jne = $this->asm->jne_rel32();
+
+            if ($arm->binding !== null) {
+                $binding_slot = $this->match_binding_slots[spl_object_id($arm)];
+                $this->asm->load(X86::RCX, X86::RBP, -($subject_slot['offset'] - 8));
+                $this->asm->store(X86::RBP, -$binding_slot['offset'], X86::RCX);
+                $field_type = $this->enum_defs[$enum_type]['variants'][$arm->variant_name]['fields'][0] ?? 'i32';
+                $this->vars[$arm->binding] = ['offset' => $binding_slot['offset'], 'type' => $field_type];
+            }
+
+            if ($as_expr) {
+                $this->generateBodyForExpr($arm->body);
+            } else {
+                $this->generateBody($arm->body);
+            }
+
+            if ($arm->binding !== null) {
+                unset($this->vars[$arm->binding]);
+            }
+
+            $end_patches[] = $this->asm->jmp_rel32();
+        }
+
+        // Patch the last non-wildcard arm's jne to the wildcard (or end)
+        if ($pending_jne !== null) {
+            $this->asm->patch32($pending_jne, $this->asm->pos() - $pending_jne - 4);
+        }
+
+        foreach ($node->arms as $arm) {
+            if (!$arm->is_wildcard) continue;
+            if ($as_expr) {
+                $this->generateBodyForExpr($arm->body);
+            } else {
+                $this->generateBody($arm->body);
+            }
+        }
+
+        $end_pos = $this->asm->pos();
+        foreach ($end_patches as $patch) {
+            $this->asm->patch32($patch, $end_pos - $patch - 4);
         }
     }
 

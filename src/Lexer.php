@@ -23,6 +23,8 @@ class Lexer {
         'false'    => Token::FALSE,
         'impl'     => Token::IMPL,
         'self'     => Token::SELF,
+        'enum'     => Token::ENUM,
+        'match'    => Token::MATCH,
     ];
 
     public function __construct(string $source) {
@@ -128,8 +130,9 @@ class Lexer {
         $ch   = $this->source[$this->pos++];
         $next = $this->charAt($this->pos);
 
-        if ($ch === ':' && $next === ':') { $this->pos++; return new Token(Token::DCOLON, '::',  $line); }
-        if ($ch === '=' && $next === '=') { $this->pos++; return new Token(Token::EQEQ,   '==',  $line); }
+        if ($ch === ':' && $next === ':') { $this->pos++; return new Token(Token::DCOLON,    '::',  $line); }
+        if ($ch === '=' && $next === '>') { $this->pos++; return new Token(Token::FAT_ARROW, '=>',  $line); }
+        if ($ch === '=' && $next === '=') { $this->pos++; return new Token(Token::EQEQ,      '==',  $line); }
         if ($ch === '!' && $next === '=') { $this->pos++; return new Token(Token::NEQ,    '!=',  $line); }
         if ($ch === '<' && $next === '=') { $this->pos++; return new Token(Token::LTE,    '<=',  $line); }
         if ($ch === '>' && $next === '=') { $this->pos++; return new Token(Token::GTE,    '>=',  $line); }
