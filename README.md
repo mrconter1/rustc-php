@@ -2,6 +2,8 @@
 
 > Under Development
 
+This project compiles valid Rust code with ownership checking into raw executable machine code using PHP 8.4.
+
 ## Installation
 
 In order to build Rust code you of course first need to install PHP. You can do this easily on Windows 11 by running this command:
