@@ -81,6 +81,29 @@ class WhileNode {
     }
 }
 
+class LoopNode {
+    public array $body;
+    public int   $line;
+    public function __construct(array $body, int $line) {
+        $this->body = $body;
+        $this->line = $line;
+    }
+}
+
+class BreakNode {
+    public int $line;
+    public function __construct(int $line) {
+        $this->line = $line;
+    }
+}
+
+class ContinueNode {
+    public int $line;
+    public function __construct(int $line) {
+        $this->line = $line;
+    }
+}
+
 class ExprStmtNode {
     public mixed $expr;
     public int   $line;

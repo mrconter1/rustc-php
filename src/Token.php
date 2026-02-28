@@ -8,9 +8,12 @@ class Token {
     const IF     = 'IF';
     const ELSE   = 'ELSE';
     const WHILE  = 'WHILE';
-    const RETURN = 'RETURN';
-    const TRUE   = 'TRUE';
-    const FALSE  = 'FALSE';
+    const RETURN   = 'RETURN';
+    const LOOP     = 'LOOP';
+    const BREAK    = 'BREAK';
+    const CONTINUE = 'CONTINUE';
+    const TRUE     = 'TRUE';
+    const FALSE    = 'FALSE';
 
     // Literals
     const INT_LIT = 'INT_LIT';

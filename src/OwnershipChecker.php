@@ -148,6 +148,17 @@ class OwnershipChecker {
             return;
         }
 
+        if ($stmt instanceof LoopNode) {
+            $saved = $this->vars;
+            $this->checkBody($stmt->body);
+            $this->vars = $this->mergeStates($saved, $this->vars);
+            return;
+        }
+
+        if ($stmt instanceof BreakNode || $stmt instanceof ContinueNode) {
+            return;
+        }
+
         if ($stmt instanceof IfNode) {
             $this->checkExpr($stmt->condition);
 

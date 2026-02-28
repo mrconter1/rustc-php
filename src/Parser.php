@@ -73,6 +73,21 @@ class Parser {
         if ($this->check(Token::WHILE)) {
             return $this->parseWhile();
         }
+        if ($this->check(Token::LOOP)) {
+            $line = $this->expect(Token::LOOP)->line;
+            $body = $this->parseBlock();
+            return new LoopNode($body, $line);
+        }
+        if ($this->check(Token::BREAK)) {
+            $line = $this->expect(Token::BREAK)->line;
+            $this->expect(Token::SEMICOLON);
+            return new BreakNode($line);
+        }
+        if ($this->check(Token::CONTINUE)) {
+            $line = $this->expect(Token::CONTINUE)->line;
+            $this->expect(Token::SEMICOLON);
+            return new ContinueNode($line);
+        }
         if ($this->check(Token::RETURN)) {
             $line = $this->expect(Token::RETURN)->line;
             if ($this->check(Token::SEMICOLON)) {

@@ -14,9 +14,12 @@ class Lexer {
         'if'     => Token::IF,
         'else'   => Token::ELSE,
         'while'  => Token::WHILE,
-        'return' => Token::RETURN,
-        'true'   => Token::TRUE,
-        'false'  => Token::FALSE,
+        'return'   => Token::RETURN,
+        'loop'     => Token::LOOP,
+        'break'    => Token::BREAK,
+        'continue' => Token::CONTINUE,
+        'true'     => Token::TRUE,
+        'false'    => Token::FALSE,
     ];
 
     public function __construct(string $source) {

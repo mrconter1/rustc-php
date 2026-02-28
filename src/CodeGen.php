@@ -17,6 +17,7 @@ class CodeGen {
     private array $call_patches = [];
     private array $return_patches = [];
     private array $let_slots = [];
+    private array $loop_stack = [];
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
@@ -185,6 +186,9 @@ class CodeGen {
             if ($stmt instanceof WhileNode) {
                 $this->collectVars($stmt->body);
             }
+            if ($stmt instanceof LoopNode) {
+                $this->collectVars($stmt->body);
+            }
         }
     }
 
@@ -232,6 +236,29 @@ class CodeGen {
 
         if ($stmt instanceof WhileNode) {
             $this->generateWhile($stmt);
+            return;
+        }
+
+        if ($stmt instanceof LoopNode) {
+            $this->generateLoop($stmt);
+            return;
+        }
+
+        if ($stmt instanceof BreakNode) {
+            if (empty($this->loop_stack)) {
+                throw new RuntimeException("break outside of loop on line {$stmt->line}");
+            }
+            $ctx = &$this->loop_stack[count($this->loop_stack) - 1];
+            $ctx['break_patches'][] = $this->asm->jmp_rel32();
+            return;
+        }
+
+        if ($stmt instanceof ContinueNode) {
+            if (empty($this->loop_stack)) {
+                throw new RuntimeException("continue outside of loop on line {$stmt->line}");
+            }
+            $ctx = $this->loop_stack[count($this->loop_stack) - 1];
+            $this->asm->jmp_to($ctx['continue_target']);
             return;
         }
 
@@ -340,12 +367,35 @@ class CodeGen {
 
     private function generateWhile(WhileNode $node): void {
         $loop_top = $this->asm->pos();
+        $this->loop_stack[] = ['continue_target' => $loop_top, 'break_patches' => []];
+
         $this->generateExpr($node->condition);
         $this->asm->test(X86::RAX, X86::RAX);
         $jz_patch = $this->asm->jz_rel32();
         $this->generateBody($node->body);
         $this->asm->jmp_to($loop_top);
-        $this->asm->patch32($jz_patch, $this->asm->pos() - $jz_patch - 4);
+
+        $after_loop = $this->asm->pos();
+        $this->asm->patch32($jz_patch, $after_loop - $jz_patch - 4);
+
+        $ctx = array_pop($this->loop_stack);
+        foreach ($ctx['break_patches'] as $patch_pos) {
+            $this->asm->patch32($patch_pos, $after_loop - $patch_pos - 4);
+        }
+    }
+
+    private function generateLoop(LoopNode $node): void {
+        $loop_top = $this->asm->pos();
+        $this->loop_stack[] = ['continue_target' => $loop_top, 'break_patches' => []];
+
+        $this->generateBody($node->body);
+        $this->asm->jmp_to($loop_top);
+
+        $after_loop = $this->asm->pos();
+        $ctx = array_pop($this->loop_stack);
+        foreach ($ctx['break_patches'] as $patch_pos) {
+            $this->asm->patch32($patch_pos, $after_loop - $patch_pos - 4);
+        }
     }
 
     private function generateExpr(mixed $expr): void {
