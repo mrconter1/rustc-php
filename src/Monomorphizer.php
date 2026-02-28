@@ -396,7 +396,7 @@ class Monomorphizer {
         $new_body   = $this->substituteBody($fn->body, $map);
         $new_body   = $this->rewriteBody($new_body);
 
-        $this->concrete_fns[] = new FunctionNode($mangled, $new_params, $new_return, $new_body, $fn->line);
+        $this->concrete_fns[] = new FunctionNode($mangled, $new_params, $new_return, $new_body, $fn->line, [], $fn->is_pub, $fn->module);
     }
 
     private function emitStruct(string $name, array $map): void {
@@ -408,7 +408,7 @@ class Monomorphizer {
             $new_fields[] = ['name' => $f['name'], 'type' => $this->substituteType($f['type'], $map)];
         }
 
-        $this->concrete_structs[] = new StructDefNode($mangled, $new_fields, $sd->line);
+        $this->concrete_structs[] = new StructDefNode($mangled, $new_fields, $sd->line, [], $sd->is_pub, $sd->module);
     }
 
     private function emitImpl(int $impl_idx, array $map): void {
@@ -425,7 +425,7 @@ class Monomorphizer {
             $new_return = $fn->return_type !== null ? $this->substituteType($fn->return_type, $map) : null;
             $new_body   = $this->substituteBody($fn->body, $map);
             $new_body   = $this->rewriteBody($new_body);
-            $new_fns[] = new FunctionNode($fn->name, $new_params, $new_return, $new_body, $fn->line);
+            $new_fns[] = new FunctionNode($fn->name, $new_params, $new_return, $new_body, $fn->line, [], $fn->is_pub, $fn->module);
         }
 
         $this->concrete_impls[] = new ImplNode($mangled_struct, $new_fns, $impl->line);
@@ -772,7 +772,7 @@ class Monomorphizer {
             $new_params[] = ['name' => $p['name'], 'type' => $this->rewriteTypeName($p['type'])];
         }
         $new_return = $fn->return_type !== null ? $this->rewriteTypeName($fn->return_type) : null;
-        return new FunctionNode($fn->name, $new_params, $new_return, $fn->body, $fn->line);
+        return new FunctionNode($fn->name, $new_params, $new_return, $fn->body, $fn->line, $fn->type_params, $fn->is_pub, $fn->module);
     }
 
     private function rewriteTypeName(string $type): string {

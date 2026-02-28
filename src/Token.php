@@ -19,6 +19,9 @@ class Token {
     const SELF     = 'SELF';
     const ENUM     = 'ENUM';
     const MATCH    = 'MATCH';
+    const MOD      = 'MOD';
+    const USE      = 'USE';
+    const PUB      = 'PUB';
     const FAT_ARROW = 'FAT_ARROW'; // =>
 
     // Literals

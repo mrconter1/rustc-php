@@ -5,21 +5,45 @@ class ProgramNode {
     public array $structs;
     public array $impls;
     public array $enums;
-    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = []) {
+    public array $mod_decls;
+    public array $uses;
+    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = [], array $mod_decls = [], array $uses = []) {
         $this->functions = $functions;
         $this->structs   = $structs;
         $this->impls     = $impls;
         $this->enums     = $enums;
+        $this->mod_decls = $mod_decls;
+        $this->uses      = $uses;
+    }
+}
+
+class ModDeclNode {
+    public string $name;
+    public int    $line;
+    public function __construct(string $name, int $line) {
+        $this->name = $name;
+        $this->line = $line;
+    }
+}
+
+class UseNode {
+    public array $path;
+    public int   $line;
+    public function __construct(array $path, int $line) {
+        $this->path = $path;
+        $this->line = $line;
     }
 }
 
 class EnumDefNode {
     public string $name;
     public array  $variants; // [['name' => string, 'fields' => [string, ...]], ...]
+    public bool   $is_pub;
     public int    $line;
-    public function __construct(string $name, array $variants, int $line) {
+    public function __construct(string $name, array $variants, int $line, bool $is_pub = false) {
         $this->name     = $name;
         $this->variants = $variants;
+        $this->is_pub   = $is_pub;
         $this->line     = $line;
     }
 }
@@ -66,14 +90,18 @@ class MatchNode {
 }
 
 class StructDefNode {
-    public string $name;
-    public array  $fields;
-    public array  $type_params;
-    public int    $line;
-    public function __construct(string $name, array $fields, int $line, array $type_params = []) {
+    public string  $name;
+    public array   $fields;
+    public array   $type_params;
+    public bool    $is_pub;
+    public ?string $module;
+    public int     $line;
+    public function __construct(string $name, array $fields, int $line, array $type_params = [], bool $is_pub = false, ?string $module = null) {
         $this->name        = $name;
         $this->fields      = $fields;
         $this->type_params = $type_params;
+        $this->is_pub      = $is_pub;
+        $this->module      = $module;
         $this->line        = $line;
     }
 }
@@ -119,13 +147,17 @@ class FunctionNode {
     public ?string $return_type;
     public array   $body;
     public array   $type_params;
+    public bool    $is_pub;
+    public ?string $module;
     public int     $line;
-    public function __construct(string $name, array $params, ?string $return_type, array $body, int $line, array $type_params = []) {
+    public function __construct(string $name, array $params, ?string $return_type, array $body, int $line, array $type_params = [], bool $is_pub = false, ?string $module = null) {
         $this->name        = $name;
         $this->params      = $params;
         $this->return_type = $return_type;
         $this->body        = $body;
         $this->type_params = $type_params;
+        $this->is_pub      = $is_pub;
+        $this->module      = $module;
         $this->line        = $line;
     }
 }

@@ -10,14 +10,20 @@ class Parser {
     private array $struct_names = [];
     private array $enum_names   = [];
 
-    public function __construct(array $tokens) {
+    public function __construct(array $tokens, array $extra_struct_names = [], array $extra_enum_names = []) {
         $this->tokens = $tokens;
+        $this->struct_names = $extra_struct_names;
+        $this->enum_names   = $extra_enum_names;
     }
 
     public function parse(): ProgramNode {
         $saved = $this->pos;
         while (!$this->check(Token::EOF)) {
-            if ($this->check(Token::STRUCT)) {
+            if ($this->check(Token::PUB)) $this->pos++;
+            if ($this->check(Token::MOD) || $this->check(Token::USE)) {
+                while (!$this->check(Token::SEMICOLON) && !$this->check(Token::EOF)) $this->pos++;
+                if ($this->check(Token::SEMICOLON)) $this->pos++;
+            } elseif ($this->check(Token::STRUCT)) {
                 $this->pos++;
                 $this->struct_names[] = $this->expect(Token::IDENT)->value;
                 if ($this->check(Token::LT)) {
@@ -45,21 +51,51 @@ class Parser {
         $structs   = [];
         $impls     = [];
         $enums     = [];
+        $mod_decls = [];
+        $uses      = [];
         while (!$this->check(Token::EOF)) {
-            if ($this->check(Token::STRUCT)) {
-                $structs[] = $this->parseStruct();
+            $is_pub = false;
+            if ($this->check(Token::PUB)) {
+                $is_pub = true;
+                $this->pos++;
+            }
+            if ($this->check(Token::MOD)) {
+                $mod_decls[] = $this->parseModDecl();
+            } elseif ($this->check(Token::USE)) {
+                $uses[] = $this->parseUse();
+            } elseif ($this->check(Token::STRUCT)) {
+                $structs[] = $this->parseStruct($is_pub);
             } elseif ($this->check(Token::ENUM)) {
-                $enums[] = $this->parseEnum();
+                $enums[] = $this->parseEnum($is_pub);
             } elseif ($this->check(Token::IMPL)) {
                 $impls[] = $this->parseImpl();
             } else {
-                $functions[] = $this->parseFunction();
+                $functions[] = $this->parseFunction($is_pub);
             }
         }
-        return new ProgramNode($functions, $structs, $impls, $enums);
+        return new ProgramNode($functions, $structs, $impls, $enums, $mod_decls, $uses);
     }
 
-    private function parseEnum(): EnumDefNode {
+    private function parseModDecl(): ModDeclNode {
+        $line = $this->expect(Token::MOD)->line;
+        $name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::SEMICOLON);
+        return new ModDeclNode($name, $line);
+    }
+
+    private function parseUse(): UseNode {
+        $line = $this->expect(Token::USE)->line;
+        $path = [];
+        $path[] = $this->expect(Token::IDENT)->value;
+        while ($this->check(Token::DCOLON)) {
+            $this->pos++;
+            $path[] = $this->expect(Token::IDENT)->value;
+        }
+        $this->expect(Token::SEMICOLON);
+        return new UseNode($path, $line);
+    }
+
+    private function parseEnum(bool $is_pub = false): EnumDefNode {
         $line = $this->expect(Token::ENUM)->line;
         $name = $this->expect(Token::IDENT)->value;
         $this->expect(Token::LBRACE);
@@ -85,7 +121,7 @@ class Parser {
             if ($this->check(Token::COMMA)) $this->pos++;
         }
         $this->expect(Token::RBRACE);
-        return new EnumDefNode($name, $variants, $line);
+        return new EnumDefNode($name, $variants, $line, $is_pub);
     }
 
     private function parseMatch(): MatchNode {
@@ -144,32 +180,42 @@ class Parser {
         $this->expect(Token::LBRACE);
         $functions = [];
         while (!$this->check(Token::RBRACE)) {
-            $functions[] = $this->parseFunction();
+            $fn_pub = false;
+            if ($this->check(Token::PUB)) {
+                $fn_pub = true;
+                $this->pos++;
+            }
+            $functions[] = $this->parseFunction($fn_pub);
         }
         $this->expect(Token::RBRACE);
         return new ImplNode($struct_name, $functions, $line, $type_params);
     }
 
-    private function parseStruct(): StructDefNode {
+    private function parseStruct(bool $is_pub = false): StructDefNode {
         $line = $this->expect(Token::STRUCT)->line;
         $name = $this->expect(Token::IDENT)->value;
         $type_params = $this->parseTypeParams();
         $this->expect(Token::LBRACE);
         $fields = [];
         while (!$this->check(Token::RBRACE)) {
+            $field_pub = false;
+            if ($this->check(Token::PUB)) {
+                $field_pub = true;
+                $this->pos++;
+            }
             $fname = $this->expect(Token::IDENT)->value;
             $this->expect(Token::COLON);
             $ftype = $this->parseType();
-            $fields[] = ['name' => $fname, 'type' => $ftype];
+            $fields[] = ['name' => $fname, 'type' => $ftype, 'pub' => $field_pub];
             if ($this->check(Token::COMMA)) {
                 $this->pos++;
             }
         }
         $this->expect(Token::RBRACE);
-        return new StructDefNode($name, $fields, $line, $type_params);
+        return new StructDefNode($name, $fields, $line, $type_params, $is_pub);
     }
 
-    private function parseFunction(): FunctionNode {
+    private function parseFunction(bool $is_pub = false): FunctionNode {
         $this->expect(Token::FN);
         $name = $this->expect(Token::IDENT)->value;
         $type_params = $this->parseTypeParams();
@@ -209,7 +255,7 @@ class Parser {
         }
 
         $body = $this->parseBlock();
-        return new FunctionNode($name, $params, $return_type, $body, $line, $type_params);
+        return new FunctionNode($name, $params, $return_type, $body, $line, $type_params, $is_pub);
     }
 
     private function parseBlock(): array {

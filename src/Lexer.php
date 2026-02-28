@@ -25,6 +25,9 @@ class Lexer {
         'self'     => Token::SELF,
         'enum'     => Token::ENUM,
         'match'    => Token::MATCH,
+        'mod'      => Token::MOD,
+        'use'      => Token::USE,
+        'pub'      => Token::PUB,
     ];
 
     public function __construct(string $source) {

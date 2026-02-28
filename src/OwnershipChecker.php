@@ -8,6 +8,7 @@ class OwnershipChecker {
     private array $struct_defs = [];
     private array $enum_defs   = [];
     private ?string $current_return_type = null;
+    private ?string $current_module = null;
 
     public function check(ProgramNode $program): void {
         foreach ($program->structs as $sd) {
@@ -21,6 +22,7 @@ class OwnershipChecker {
                 'fields' => $sd->fields,
                 'size' => $size,
                 'field_offsets' => $field_offsets,
+                'module' => $sd->module,
             ];
         }
 
@@ -75,6 +77,7 @@ class OwnershipChecker {
     private function checkFunction(FunctionNode $fn, ?string $struct_name = null): void {
         $this->vars = [];
         $this->current_return_type = $fn->return_type;
+        $this->current_module = $fn->module;
         foreach ($fn->params as $param) {
             $type = $param['type'];
             if ($struct_name !== null) {
@@ -185,6 +188,13 @@ class OwnershipChecker {
                 elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
                 if (isset($this->struct_defs[$base_type])) {
                     $sd = $this->struct_defs[$base_type];
+                    if ($sd['module'] !== null && $sd['module'] !== $this->current_module) {
+                        foreach ($sd['fields'] as $f) {
+                            if ($f['name'] === $stmt->field_name && empty($f['pub'])) {
+                                throw new RuntimeException("Field '{$stmt->field_name}' of struct is private on line {$stmt->line}");
+                            }
+                        }
+                    }
                     foreach ($sd['fields'] as $f) {
                         if ($f['name'] === $stmt->field_name) {
                             $val_type = $this->exprType($stmt->value);
@@ -348,6 +358,16 @@ class OwnershipChecker {
             foreach ($expr->fields as $f) {
                 $this->checkExpr($f['value']);
             }
+            if (isset($this->struct_defs[$expr->struct_name])) {
+                $sd = $this->struct_defs[$expr->struct_name];
+                if ($sd['module'] !== null && $sd['module'] !== $this->current_module) {
+                    foreach ($sd['fields'] as $f) {
+                        if (empty($f['pub'])) {
+                            throw new RuntimeException("Field '{$f['name']}' of struct is private on line {$expr->line}");
+                        }
+                    }
+                }
+            }
             return;
         }
 
@@ -371,6 +391,20 @@ class OwnershipChecker {
 
         if ($expr instanceof FieldAccessNode) {
             $this->checkExpr($expr->object);
+            $obj_type = $this->exprType($expr->object);
+            $base_type = $obj_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+            if (isset($this->struct_defs[$base_type])) {
+                $sd = $this->struct_defs[$base_type];
+                if ($sd['module'] !== null && $sd['module'] !== $this->current_module) {
+                    foreach ($sd['fields'] as $f) {
+                        if ($f['name'] === $expr->field_name && empty($f['pub'])) {
+                            throw new RuntimeException("Field '{$expr->field_name}' of struct is private on line {$expr->line}");
+                        }
+                    }
+                }
+            }
             return;
         }
 

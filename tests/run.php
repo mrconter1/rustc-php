@@ -25,6 +25,9 @@ foreach ($files as $file) {
     } elseif (isset($header['exit']) || isset($header['stdout'])) {
         $result = runTest($file, $header, $rustc, $tmp_binary);
     } else {
+        if (file_exists(dirname($file) . DIRECTORY_SEPARATOR . 'main.rs') && basename($file) !== 'main.rs') {
+            continue;
+        }
         echo "SKIP  $name — no test header\n";
         continue;
     }
