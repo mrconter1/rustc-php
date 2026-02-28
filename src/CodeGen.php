@@ -857,11 +857,16 @@ class CodeGen {
 
             // Receiver (arg 0)
             $self_param_type = $arg_reg_map[0]['type'];
-            if ($self_param_type === "&$base_type" && $receiver_type === $base_type) {
+            $raw_receiver_ref = false;
+            if ($expr->receiver instanceof IdentNode && isset($this->vars[$expr->receiver->name])) {
+                $raw_type = $this->vars[$expr->receiver->name]['type'];
+                $raw_receiver_ref = str_starts_with($raw_type, '&') || str_starts_with($raw_type, '&mut ');
+            }
+            if (!$raw_receiver_ref && $self_param_type === "&$base_type" && $receiver_type === $base_type) {
                 if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow only supported for variables on line {$expr->line}");
                 $var = $this->vars[$expr->receiver->name];
                 $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
-            } elseif ($self_param_type === "&mut $base_type" && $receiver_type === $base_type) {
+            } elseif (!$raw_receiver_ref && $self_param_type === "&mut $base_type" && $receiver_type === $base_type) {
                 if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow-mut only supported for variables on line {$expr->line}");
                 $var = $this->vars[$expr->receiver->name];
                 $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);

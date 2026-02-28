@@ -9,6 +9,7 @@ class Parser {
     private int   $pos = 0;
     private array $struct_names = [];
     private array $enum_names   = [];
+    private array $last_type_bounds = [];
 
     public function __construct(array $tokens, array $extra_struct_names = [], array $extra_enum_names = []) {
         $this->tokens = $tokens;
@@ -23,6 +24,23 @@ class Parser {
             if ($this->check(Token::MOD) || $this->check(Token::USE)) {
                 while (!$this->check(Token::SEMICOLON) && !$this->check(Token::EOF)) $this->pos++;
                 if ($this->check(Token::SEMICOLON)) $this->pos++;
+            } elseif ($this->check(Token::TRAIT)) {
+                $this->pos++;
+                if ($this->check(Token::IDENT)) $this->pos++;
+                while (!$this->check(Token::RBRACE) && !$this->check(Token::EOF)) {
+                    if ($this->check(Token::LBRACE)) {
+                        $this->pos++;
+                        $depth = 1;
+                        while ($this->pos < count($this->tokens) && $depth > 0) {
+                            if ($this->check(Token::LBRACE)) $depth++;
+                            elseif ($this->check(Token::RBRACE)) $depth--;
+                            if ($depth > 0) $this->pos++;
+                        }
+                        break;
+                    }
+                    $this->pos++;
+                }
+                if ($this->check(Token::RBRACE)) $this->pos++;
             } elseif ($this->check(Token::STRUCT)) {
                 $this->pos++;
                 $this->struct_names[] = $this->expect(Token::IDENT)->value;
@@ -53,6 +71,7 @@ class Parser {
         $enums     = [];
         $mod_decls = [];
         $uses      = [];
+        $traits    = [];
         while (!$this->check(Token::EOF)) {
             $is_pub = false;
             if ($this->check(Token::PUB)) {
@@ -63,6 +82,8 @@ class Parser {
                 $mod_decls[] = $this->parseModDecl();
             } elseif ($this->check(Token::USE)) {
                 $uses[] = $this->parseUse();
+            } elseif ($this->check(Token::TRAIT)) {
+                $traits[] = $this->parseTrait($is_pub);
             } elseif ($this->check(Token::STRUCT)) {
                 $structs[] = $this->parseStruct($is_pub);
             } elseif ($this->check(Token::ENUM)) {
@@ -73,7 +94,7 @@ class Parser {
                 $functions[] = $this->parseFunction($is_pub);
             }
         }
-        return new ProgramNode($functions, $structs, $impls, $enums, $mod_decls, $uses);
+        return new ProgramNode($functions, $structs, $impls, $enums, $mod_decls, $uses, $traits);
     }
 
     private function parseModDecl(): ModDeclNode {
@@ -167,10 +188,65 @@ class Parser {
         return new MatchNode($subject, $arms, $line);
     }
 
+    private function parseTrait(bool $is_pub = false): TraitNode {
+        $line = $this->expect(Token::TRAIT)->line;
+        $name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::LBRACE);
+        $methods = [];
+        while (!$this->check(Token::RBRACE)) {
+            $this->expect(Token::FN);
+            $fn_name = $this->expect(Token::IDENT)->value;
+            $fn_line = $this->current()->line;
+            $this->expect(Token::LPAREN);
+            $params = [];
+            while (!$this->check(Token::RPAREN)) {
+                if ($this->check(Token::SELF)) {
+                    $this->pos++;
+                    $params[] = ['name' => 'self', 'type' => 'self'];
+                } elseif ($this->check(Token::AMP)) {
+                    $this->pos++;
+                    $mut = false;
+                    if ($this->check(Token::MUT)) { $mut = true; $this->pos++; }
+                    $this->expect(Token::SELF);
+                    $params[] = ['name' => 'self', 'type' => ($mut ? '&mut self' : '&self')];
+                } else {
+                    $pname = $this->expect(Token::IDENT)->value;
+                    $this->expect(Token::COLON);
+                    $ptype = $this->parseType();
+                    $params[] = ['name' => $pname, 'type' => $ptype];
+                }
+                if ($this->check(Token::COMMA)) $this->pos++;
+            }
+            $this->expect(Token::RPAREN);
+            $return_type = null;
+            if ($this->check(Token::ARROW)) {
+                $this->pos++;
+                $return_type = $this->parseType();
+            }
+            if ($this->check(Token::SEMICOLON)) {
+                $this->pos++;
+                $methods[] = new FunctionNode($fn_name, $params, $return_type, null, $fn_line);
+            } else {
+                $body = $this->parseBlock();
+                $methods[] = new FunctionNode($fn_name, $params, $return_type, $body, $fn_line);
+            }
+        }
+        $this->expect(Token::RBRACE);
+        return new TraitNode($name, $methods, $line, $is_pub);
+    }
+
     private function parseImpl(): ImplNode {
         $line = $this->expect(Token::IMPL)->line;
         $type_params = $this->parseTypeParams();
-        $struct_name = $this->expect(Token::IDENT)->value;
+        $type_bounds = $this->last_type_bounds;
+        $first_name = $this->expect(Token::IDENT)->value;
+        $trait_name = null;
+        $struct_name = $first_name;
+        if ($this->check(Token::FOR)) {
+            $this->pos++;
+            $trait_name = $first_name;
+            $struct_name = $this->expect(Token::IDENT)->value;
+        }
         if ($this->check(Token::LT)) {
             $this->pos++;
             $inner = $this->expect(Token::IDENT)->value;
@@ -188,7 +264,7 @@ class Parser {
             $functions[] = $this->parseFunction($fn_pub);
         }
         $this->expect(Token::RBRACE);
-        return new ImplNode($struct_name, $functions, $line, $type_params);
+        return new ImplNode($struct_name, $functions, $line, $type_params, $trait_name, $type_bounds);
     }
 
     private function parseStruct(bool $is_pub = false): StructDefNode {
@@ -219,6 +295,7 @@ class Parser {
         $this->expect(Token::FN);
         $name = $this->expect(Token::IDENT)->value;
         $type_params = $this->parseTypeParams();
+        $type_bounds = $this->last_type_bounds;
         $line = $this->current()->line;
 
         $this->expect(Token::LPAREN);
@@ -255,7 +332,7 @@ class Parser {
         }
 
         $body = $this->parseBlock();
-        return new FunctionNode($name, $params, $return_type, $body, $line, $type_params, $is_pub);
+        return new FunctionNode($name, $params, $return_type, $body, $line, $type_params, $is_pub, null, $type_bounds);
     }
 
     private function parseBlock(): array {
@@ -686,10 +763,22 @@ class Parser {
 
     private function parseTypeParams(): array {
         $params = [];
+        $this->last_type_bounds = [];
         if ($this->check(Token::LT)) {
             $this->pos++;
             while (!$this->check(Token::GT)) {
-                $params[] = $this->expect(Token::IDENT)->value;
+                $name = $this->expect(Token::IDENT)->value;
+                $params[] = $name;
+                if ($this->check(Token::COLON)) {
+                    $this->pos++;
+                    $bounds = [];
+                    $bounds[] = $this->expect(Token::IDENT)->value;
+                    while ($this->check(Token::PLUS)) {
+                        $this->pos++;
+                        $bounds[] = $this->expect(Token::IDENT)->value;
+                    }
+                    $this->last_type_bounds[$name] = $bounds;
+                }
                 if ($this->check(Token::COMMA)) $this->pos++;
             }
             $this->expect(Token::GT);

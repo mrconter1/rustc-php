@@ -19,6 +19,9 @@ class Monomorphizer {
     private array $struct_type_params = [];
     private array $var_types          = [];
 
+    private array $traits      = [];
+    private array $trait_impls = [];
+
     public function monomorphize(ProgramNode $program): ProgramNode {
         foreach ($program->functions as $fn) {
             if (!empty($fn->type_params)) {
@@ -47,6 +50,25 @@ class Monomorphizer {
         }
 
         $this->concrete_enums = $program->enums;
+
+        foreach ($program->traits as $trait) {
+            $this->traits[$trait->name] = $trait;
+        }
+
+        $this->fillTraitDefaults($this->concrete_impls);
+        $this->fillTraitDefaults($this->generic_impls);
+
+        foreach ($this->concrete_impls as $impl) {
+            if ($impl->trait_name !== null) {
+                $this->trait_impls[$impl->trait_name][$impl->struct_name] = true;
+            }
+        }
+        foreach ($this->generic_impls as $impl) {
+            if ($impl->trait_name !== null) {
+                $base = $this->stripGeneric($impl->struct_name);
+                $this->trait_impls[$impl->trait_name]['__generic__' . $base] = true;
+            }
+        }
 
         $this->collectInstantiations($this->concrete_fns);
         foreach ($this->concrete_impls as $impl) {
@@ -83,12 +105,20 @@ class Monomorphizer {
 
         foreach ($this->concrete_fns as &$fn) {
             $fn = $this->rewriteFunctionSignature($fn);
+            $this->var_types = [];
+            foreach ($fn->params as $p) {
+                $this->var_types[$p['name']] = preg_replace('/^&(mut )?/', '', $p['type']);
+            }
             $fn->body = $this->rewriteBody($fn->body);
         }
         unset($fn);
         foreach ($this->concrete_impls as &$impl) {
             foreach ($impl->functions as &$fn) {
                 $fn = $this->rewriteFunctionSignature($fn);
+                $this->var_types = [];
+                foreach ($fn->params as $p) {
+                    $this->var_types[$p['name']] = preg_replace('/^&(mut )?/', '', $p['type']);
+                }
                 $fn->body = $this->rewriteBody($fn->body);
             }
             unset($fn);
@@ -142,8 +172,59 @@ class Monomorphizer {
         return false;
     }
 
+    private function fillTraitDefaults(array &$impls): void {
+        foreach ($impls as &$impl) {
+            if ($impl->trait_name === null) continue;
+            if (!isset($this->traits[$impl->trait_name])) continue;
+            $trait = $this->traits[$impl->trait_name];
+
+            $provided = [];
+            foreach ($impl->functions as $fn) {
+                $provided[$fn->name] = true;
+            }
+
+            foreach ($trait->methods as $trait_method) {
+                if (isset($provided[$trait_method->name])) continue;
+                if ($trait_method->body !== null) {
+                    $impl->functions[] = clone $trait_method;
+                } else {
+                    throw new RuntimeException(
+                        "Type '{$impl->struct_name}' does not implement required method '{$trait_method->name}' of trait '{$impl->trait_name}' on line {$impl->line}"
+                    );
+                }
+            }
+        }
+        unset($impl);
+    }
+
+    private function validateBounds(FunctionNode $fn, array $map): void {
+        foreach ($fn->type_bounds as $param => $bounds) {
+            $concrete = $map[$param] ?? null;
+            if ($concrete === null) continue;
+            foreach ($bounds as $trait_name) {
+                if (!$this->typeImplementsTrait($concrete, $trait_name)) {
+                    throw new RuntimeException(
+                        "Type '$concrete' does not implement trait '$trait_name'"
+                    );
+                }
+            }
+        }
+    }
+
+    private function typeImplementsTrait(string $type, string $trait_name): bool {
+        if (isset($this->trait_impls[$trait_name][$type])) return true;
+        foreach ($this->trait_impls[$trait_name] ?? [] as $key => $v) {
+            if (str_starts_with($key, '__generic__')) {
+                $base = substr($key, strlen('__generic__'));
+                if (str_starts_with($type, $base . '__') || $type === $base) return true;
+            }
+        }
+        return false;
+    }
+
     private function collectInstantiations(array $fns): void {
         foreach ($fns as $fn) {
+            if ($fn->body === null) continue;
             $this->var_types = [];
             foreach ($fn->params as $p) {
                 $this->registerTypeUsage($p['type']);
@@ -230,8 +311,10 @@ class Monomorphizer {
             }
 
             if (isset($this->generic_fns[$expr->name])) {
-                $map = $this->inferTypeMap($this->generic_fns[$expr->name], $expr->args);
+                $fn_def = $this->generic_fns[$expr->name];
+                $map = $this->inferTypeMap($fn_def, $expr->args);
                 if ($map !== null) {
+                    $this->validateBounds($fn_def, $map);
                     $key = $expr->name . '<' . implode(',', $map) . '>';
                     $this->fn_instances[$key] = [$expr->name, $map];
                 }
@@ -396,7 +479,7 @@ class Monomorphizer {
         $new_body   = $this->substituteBody($fn->body, $map);
         $new_body   = $this->rewriteBody($new_body);
 
-        $this->concrete_fns[] = new FunctionNode($mangled, $new_params, $new_return, $new_body, $fn->line, [], $fn->is_pub, $fn->module);
+        $this->concrete_fns[] = new FunctionNode($mangled, $new_params, $new_return, $new_body, $fn->line, [], $fn->is_pub, $fn->module, []);
     }
 
     private function emitStruct(string $name, array $map): void {
@@ -425,10 +508,13 @@ class Monomorphizer {
             $new_return = $fn->return_type !== null ? $this->substituteType($fn->return_type, $map) : null;
             $new_body   = $this->substituteBody($fn->body, $map);
             $new_body   = $this->rewriteBody($new_body);
-            $new_fns[] = new FunctionNode($fn->name, $new_params, $new_return, $new_body, $fn->line, [], $fn->is_pub, $fn->module);
+            $new_fns[] = new FunctionNode($fn->name, $new_params, $new_return, $new_body, $fn->line, [], $fn->is_pub, $fn->module, []);
         }
 
-        $this->concrete_impls[] = new ImplNode($mangled_struct, $new_fns, $impl->line);
+        $this->concrete_impls[] = new ImplNode($mangled_struct, $new_fns, $impl->line, [], $impl->trait_name);
+        if ($impl->trait_name !== null) {
+            $this->trait_impls[$impl->trait_name][$mangled_struct] = true;
+        }
     }
 
     private function substituteType(string $type, array $map): string {
@@ -612,7 +698,14 @@ class Monomorphizer {
     private function rewriteStmt(mixed $stmt): mixed {
         if ($stmt instanceof LetNode) {
             $type_name = $stmt->type_name !== null ? $this->rewriteTypeName($stmt->type_name) : null;
-            return new LetNode($stmt->name, $type_name, $this->rewriteExpr($stmt->value), $stmt->mutable, $stmt->line);
+            $new_value = $this->rewriteExpr($stmt->value);
+            $inferred = $stmt->type_name !== null
+                ? preg_replace('/^&(mut )?/', '', $stmt->type_name)
+                : $this->guessExprType($stmt->value);
+            if ($inferred !== null) {
+                $this->var_types[$stmt->name] = $inferred;
+            }
+            return new LetNode($stmt->name, $type_name, $new_value, $stmt->mutable, $stmt->line);
         }
         if ($stmt instanceof AssignNode) {
             return new AssignNode($stmt->name, $this->rewriteExpr($stmt->value), $stmt->line);
@@ -772,7 +865,7 @@ class Monomorphizer {
             $new_params[] = ['name' => $p['name'], 'type' => $this->rewriteTypeName($p['type'])];
         }
         $new_return = $fn->return_type !== null ? $this->rewriteTypeName($fn->return_type) : null;
-        return new FunctionNode($fn->name, $new_params, $new_return, $fn->body, $fn->line, $fn->type_params, $fn->is_pub, $fn->module);
+        return new FunctionNode($fn->name, $new_params, $new_return, $fn->body, $fn->line, $fn->type_params, $fn->is_pub, $fn->module, $fn->type_bounds);
     }
 
     private function rewriteTypeName(string $type): string {

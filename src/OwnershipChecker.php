@@ -91,7 +91,9 @@ class OwnershipChecker {
                 'moved_line' => null,
             ];
         }
-        $this->checkBody($fn->body);
+        if ($fn->body !== null) {
+            $this->checkBody($fn->body);
+        }
     }
 
     private function checkBody(array $stmts): void {

@@ -7,13 +7,28 @@ class ProgramNode {
     public array $enums;
     public array $mod_decls;
     public array $uses;
-    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = [], array $mod_decls = [], array $uses = []) {
+    public array $traits;
+    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = [], array $mod_decls = [], array $uses = [], array $traits = []) {
         $this->functions = $functions;
         $this->structs   = $structs;
         $this->impls     = $impls;
         $this->enums     = $enums;
         $this->mod_decls = $mod_decls;
         $this->uses      = $uses;
+        $this->traits    = $traits;
+    }
+}
+
+class TraitNode {
+    public string $name;
+    public array  $methods;
+    public bool   $is_pub;
+    public int    $line;
+    public function __construct(string $name, array $methods, int $line, bool $is_pub = false) {
+        $this->name    = $name;
+        $this->methods = $methods;
+        $this->is_pub  = $is_pub;
+        $this->line    = $line;
     }
 }
 
@@ -145,17 +160,19 @@ class FunctionNode {
     public string  $name;
     public array   $params;      // [['name' => string, 'type' => string], ...]
     public ?string $return_type;
-    public array   $body;
+    public ?array  $body;
     public array   $type_params;
+    public array   $type_bounds;
     public bool    $is_pub;
     public ?string $module;
     public int     $line;
-    public function __construct(string $name, array $params, ?string $return_type, array $body, int $line, array $type_params = [], bool $is_pub = false, ?string $module = null) {
+    public function __construct(string $name, array $params, ?string $return_type, ?array $body, int $line, array $type_params = [], bool $is_pub = false, ?string $module = null, array $type_bounds = []) {
         $this->name        = $name;
         $this->params      = $params;
         $this->return_type = $return_type;
         $this->body        = $body;
         $this->type_params = $type_params;
+        $this->type_bounds = $type_bounds;
         $this->is_pub      = $is_pub;
         $this->module      = $module;
         $this->line        = $line;
@@ -374,14 +391,18 @@ class PrintlnNode {
 }
 
 class ImplNode {
-    public string $struct_name;
-    public array  $functions;
-    public array  $type_params;
-    public int    $line;
-    public function __construct(string $struct_name, array $functions, int $line, array $type_params = []) {
+    public string  $struct_name;
+    public array   $functions;
+    public array   $type_params;
+    public array   $type_bounds;
+    public ?string $trait_name;
+    public int     $line;
+    public function __construct(string $struct_name, array $functions, int $line, array $type_params = [], ?string $trait_name = null, array $type_bounds = []) {
         $this->struct_name = $struct_name;
         $this->functions   = $functions;
         $this->type_params = $type_params;
+        $this->type_bounds = $type_bounds;
+        $this->trait_name  = $trait_name;
         $this->line        = $line;
     }
 }

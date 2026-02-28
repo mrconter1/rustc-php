@@ -121,6 +121,22 @@ class ModuleResolver {
                     $pos++;
                 }
                 if ($pos < $count && $tokens[$pos]->type === Token::SEMICOLON) $pos++;
+            } elseif ($pos < $count && $tokens[$pos]->type === Token::TRAIT) {
+                $pos++;
+                if ($pos < $count && $tokens[$pos]->type === Token::IDENT) {
+                    $name = $tokens[$pos]->value;
+                    if ($is_pub) $pub_items[$name] = 'trait';
+                    $pos++;
+                }
+                $depth = 0;
+                while ($pos < $count) {
+                    if ($tokens[$pos]->type === Token::LBRACE) $depth++;
+                    elseif ($tokens[$pos]->type === Token::RBRACE) {
+                        $depth--;
+                        if ($depth <= 0) { $pos++; break; }
+                    }
+                    $pos++;
+                }
             } elseif ($pos < $count && $tokens[$pos]->type === Token::USE) {
                 while ($pos < $count && $tokens[$pos]->type !== Token::SEMICOLON && $tokens[$pos]->type !== Token::EOF) $pos++;
                 if ($pos < $count && $tokens[$pos]->type === Token::SEMICOLON) $pos++;
@@ -311,10 +327,11 @@ class ModuleResolver {
         $all_structs   = [];
         $all_impls     = [];
         $all_enums     = [];
+        $all_traits    = [];
 
-        $this->flattenModule($tree, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums);
+        $this->flattenModule($tree, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums, $all_traits);
 
-        return new ProgramNode($all_functions, $all_structs, $all_impls, $all_enums);
+        return new ProgramNode($all_functions, $all_structs, $all_impls, $all_enums, [], [], $all_traits);
     }
 
     private function flattenModule(
@@ -323,7 +340,8 @@ class ModuleResolver {
         array &$all_functions,
         array &$all_structs,
         array &$all_impls,
-        array &$all_enums
+        array &$all_enums,
+        array &$all_traits
     ): void {
         $prefix  = $tree['prefix'];
         $ast     = $tree['ast'];
@@ -371,17 +389,29 @@ class ModuleResolver {
                 ? $name_map[$impl->struct_name]
                 : ($prefix === '' ? $impl->struct_name : $prefix . '__' . $impl->struct_name);
 
+            $impl_trait = $impl->trait_name;
+            if ($impl_trait !== null && isset($name_map[$impl_trait])) {
+                $impl_trait = $name_map[$impl_trait];
+            } elseif ($impl_trait !== null && $prefix !== '') {
+                $impl_trait = $prefix . '__' . $impl_trait;
+            }
+
             $new_fns = [];
             foreach ($impl->functions as $fn) {
                 $module = $prefix === '' ? null : $prefix;
                 $new_fn = $this->rewriteFunction($fn, $fn->name, $name_map, $module, $prefix);
                 $new_fns[] = $new_fn;
             }
-            $all_impls[] = new ImplNode($impl_struct, $new_fns, $impl->line, $impl->type_params);
+            $all_impls[] = new ImplNode($impl_struct, $new_fns, $impl->line, $impl->type_params, $impl_trait, $impl->type_bounds);
+        }
+
+        foreach ($ast->traits as $trait) {
+            $mangled_name = $prefix === '' ? $trait->name : $prefix . '__' . $trait->name;
+            $all_traits[] = new TraitNode($mangled_name, $trait->methods, $trait->line, $trait->is_pub);
         }
 
         foreach ($tree['children'] as $child) {
-            $this->flattenModule($child, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums);
+            $this->flattenModule($child, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums, $all_traits);
         }
     }
 
@@ -391,8 +421,8 @@ class ModuleResolver {
             $new_params[] = ['name' => $p['name'], 'type' => $this->rewriteType($p['type'], $name_map)];
         }
         $new_return = $fn->return_type !== null ? $this->rewriteType($fn->return_type, $name_map) : null;
-        $new_body   = $this->rewriteBody($fn->body, $name_map, $prefix);
-        return new FunctionNode($new_name, $new_params, $new_return, $new_body, $fn->line, $fn->type_params, $fn->is_pub, $module);
+        $new_body   = $fn->body !== null ? $this->rewriteBody($fn->body, $name_map, $prefix) : null;
+        return new FunctionNode($new_name, $new_params, $new_return, $new_body, $fn->line, $fn->type_params, $fn->is_pub, $module, $fn->type_bounds);
     }
 
     private function rewriteType(string $type, array $name_map): string {

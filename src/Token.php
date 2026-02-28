@@ -22,6 +22,8 @@ class Token {
     const MOD      = 'MOD';
     const USE      = 'USE';
     const PUB      = 'PUB';
+    const TRAIT     = 'TRAIT';
+    const FOR       = 'FOR';
     const FAT_ARROW = 'FAT_ARROW'; // =>
 
     // Literals

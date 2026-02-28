@@ -28,6 +28,8 @@ class Lexer {
         'mod'      => Token::MOD,
         'use'      => Token::USE,
         'pub'      => Token::PUB,
+        'trait'    => Token::TRAIT,
+        'for'      => Token::FOR,
     ];
 
     public function __construct(string $source) {
