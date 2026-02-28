@@ -361,6 +361,10 @@ class Parser {
             return new IdentNode($token->value, $token->line);
         }
 
+        if ($token->type === Token::IF) {
+            return $this->parseIf();
+        }
+
         if ($token->type === Token::LPAREN) {
             $this->pos++;
             $expr = $this->parseExpr();

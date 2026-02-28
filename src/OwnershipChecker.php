@@ -216,6 +216,11 @@ class OwnershipChecker {
             return;
         }
 
+        if ($expr instanceof IfNode) {
+            $this->checkStmt($expr);
+            return;
+        }
+
         if ($expr instanceof CallNode) {
             foreach ($expr->args as $arg) {
                 $this->checkExpr($arg);
@@ -277,6 +282,15 @@ class OwnershipChecker {
         if ($expr instanceof UnaryOpNode) {
             if ($expr->op === '!') return 'bool';
             return $this->exprType($expr->operand);
+        }
+        if ($expr instanceof IfNode) {
+            if (!empty($expr->then_body)) {
+                $last = end($expr->then_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->exprType($last->value);
+                }
+            }
+            return 'i32';
         }
         if ($expr instanceof CallNode) {
             if (isset($this->func_sigs[$expr->name])) {

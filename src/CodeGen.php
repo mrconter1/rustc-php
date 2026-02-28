@@ -98,6 +98,15 @@ class CodeGen {
             return '&i32';
         }
         if ($expr instanceof BinaryOpNode) return 'i32';
+        if ($expr instanceof IfNode) {
+            if (!empty($expr->then_body)) {
+                $last = end($expr->then_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->exprType($last->value);
+                }
+            }
+            return 'i32';
+        }
         if ($expr instanceof CallNode) {
             if (isset($this->func_sigs[$expr->name])) {
                 return $this->func_sigs[$expr->name]['return_type'] ?? 'i32';
@@ -547,7 +556,42 @@ class CodeGen {
             return;
         }
 
+        if ($expr instanceof IfNode) {
+            $this->generateIfExpr($expr);
+            return;
+        }
+
         throw new RuntimeException("Unknown expression type: " . get_class($expr));
+    }
+
+    private function generateIfExpr(IfNode $node): void {
+        if ($node->else_body === null) {
+            throw new RuntimeException("if expression requires else branch on line {$node->line}");
+        }
+
+        $this->generateExpr($node->condition);
+        $this->asm->test(X86::RAX, X86::RAX);
+
+        $jz_patch = $this->asm->jz_rel32();
+        $this->generateBodyForExpr($node->then_body);
+        $jmp_patch = $this->asm->jmp_rel32();
+        $this->asm->patch32($jz_patch, $this->asm->pos() - $jz_patch - 4);
+        $this->generateBodyForExpr($node->else_body);
+        $this->asm->patch32($jmp_patch, $this->asm->pos() - $jmp_patch - 4);
+    }
+
+    private function generateBodyForExpr(array $stmts): void {
+        $n = count($stmts);
+        for ($i = 0; $i < $n; $i++) {
+            $stmt = $stmts[$i];
+            if ($i === $n - 1 && $stmt instanceof ReturnNode && $stmt->value !== null) {
+                $this->generateExpr($stmt->value);
+            } elseif ($i === $n - 1 && $stmt instanceof IfNode) {
+                $this->generateIfExpr($stmt);
+            } else {
+                $this->generateStmt($stmt);
+            }
+        }
     }
 
     private function emitCmp(int $cc): void {
