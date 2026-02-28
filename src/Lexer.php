@@ -30,6 +30,7 @@ class Lexer {
         'pub'      => Token::PUB,
         'trait'    => Token::TRAIT,
         'for'      => Token::FOR,
+        'in'       => Token::IN,
     ];
 
     public function __construct(string $source) {
@@ -135,6 +136,7 @@ class Lexer {
         $ch   = $this->source[$this->pos++];
         $next = $this->charAt($this->pos);
 
+        if ($ch === '.' && $next === '.') { $this->pos++; return new Token(Token::DOTDOT,    '..',  $line); }
         if ($ch === ':' && $next === ':') { $this->pos++; return new Token(Token::DCOLON,    '::',  $line); }
         if ($ch === '=' && $next === '>') { $this->pos++; return new Token(Token::FAT_ARROW, '=>',  $line); }
         if ($ch === '=' && $next === '=') { $this->pos++; return new Token(Token::EQEQ,      '==',  $line); }

@@ -360,6 +360,14 @@ class Parser {
             $body = $this->parseBlock();
             return new LoopNode($body, $line);
         }
+        if ($this->check(Token::FOR)) {
+            $line = $this->expect(Token::FOR)->line;
+            $var_name = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::IN);
+            $iter_expr = $this->parseExpr();
+            $body = $this->parseBlock();
+            return new ForNode($var_name, $iter_expr, $body, $line);
+        }
         if ($this->check(Token::BREAK)) {
             $line = $this->expect(Token::BREAK)->line;
             $this->expect(Token::SEMICOLON);
@@ -545,7 +553,18 @@ class Parser {
     // --- expression parsing with precedence ---
 
     private function parseExpr(): mixed {
-        return $this->parseLogicalOr();
+        return $this->parseRange();
+    }
+
+    private function parseRange(): mixed {
+        $left = $this->parseLogicalOr();
+        if ($this->check(Token::DOTDOT)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $right = $this->parseLogicalOr();
+            return new RangeNode($left, $right, $line);
+        }
+        return $left;
     }
 
     private function parseLogicalOr(): mixed {

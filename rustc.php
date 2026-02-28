@@ -3,6 +3,7 @@
 require_once __DIR__ . '/src/Lexer.php';
 require_once __DIR__ . '/src/Parser.php';
 require_once __DIR__ . '/src/ModuleResolver.php';
+require_once __DIR__ . '/src/ForLoopDesugar.php';
 require_once __DIR__ . '/src/Monomorphizer.php';
 require_once __DIR__ . '/src/OwnershipChecker.php';
 require_once __DIR__ . '/src/CodeGen.php';
@@ -30,6 +31,7 @@ if (!file_exists($input)) {
 
 try {
     $ast     = (new ModuleResolver())->resolve($input);
+    $ast     = (new ForLoopDesugar())->desugar($ast);
     $ast     = (new Monomorphizer())->monomorphize($ast);
     (new OwnershipChecker())->check($ast);
     $code    = (new CodeGen())->generate($ast, Elf::LOAD_ADDR + Elf::CODE_OFFSET);

@@ -238,6 +238,30 @@ class WhileNode {
     }
 }
 
+class RangeNode {
+    public mixed $start;
+    public mixed $end;
+    public int   $line;
+    public function __construct(mixed $start, mixed $end, int $line) {
+        $this->start = $start;
+        $this->end   = $end;
+        $this->line  = $line;
+    }
+}
+
+class ForNode {
+    public string $var_name;
+    public mixed  $iter_expr;
+    public array $body;
+    public int   $line;
+    public function __construct(string $var_name, mixed $iter_expr, array $body, int $line) {
+        $this->var_name  = $var_name;
+        $this->iter_expr = $iter_expr;
+        $this->body      = $body;
+        $this->line      = $line;
+    }
+}
+
 class LoopNode {
     public array $body;
     public int   $line;

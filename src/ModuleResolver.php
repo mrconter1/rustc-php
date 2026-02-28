@@ -520,6 +520,14 @@ class ModuleResolver {
             }
             return new MatchNode($this->rewriteExpr($stmt->subject, $name_map, $prefix), $arms, $stmt->line);
         }
+        if ($stmt instanceof ForNode) {
+            return new ForNode(
+                $stmt->var_name,
+                $this->rewriteExpr($stmt->iter_expr, $name_map, $prefix),
+                $this->rewriteBody($stmt->body, $name_map, $prefix),
+                $stmt->line
+            );
+        }
         return $stmt;
     }
 
@@ -623,6 +631,13 @@ class ModuleResolver {
         }
         if ($expr instanceof MatchNode) {
             return $this->rewriteStmt($expr, $name_map, $prefix);
+        }
+        if ($expr instanceof RangeNode) {
+            return new RangeNode(
+                $this->rewriteExpr($expr->start, $name_map, $prefix),
+                $this->rewriteExpr($expr->end, $name_map, $prefix),
+                $expr->line
+            );
         }
         return $expr;
     }

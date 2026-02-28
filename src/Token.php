@@ -24,6 +24,7 @@ class Token {
     const PUB      = 'PUB';
     const TRAIT     = 'TRAIT';
     const FOR       = 'FOR';
+    const IN        = 'IN';
     const FAT_ARROW = 'FAT_ARROW'; // =>
 
     // Literals
@@ -46,6 +47,7 @@ class Token {
     const DCOLON    = 'DCOLON';    // ::
     const COMMA     = 'COMMA';     // ,
     const DOT       = 'DOT';       // .
+    const DOTDOT    = 'DOTDOT';    // ..
     const ARROW     = 'ARROW';     // ->
 
     // Operators
