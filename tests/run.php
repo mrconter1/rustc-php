@@ -4,14 +4,18 @@ $cases_dir  = __DIR__ . '/cases';
 $rustc      = __DIR__ . '/../rustc.php';
 $tmp_binary = __DIR__ . '/../test_out';
 
-$files = glob($cases_dir . '/*.rs');
+$files = array_merge(
+    glob($cases_dir . '/valid/*.rs'),
+    glob($cases_dir . '/invalid/*.rs'),
+);
 sort($files);
 
 $passed = 0;
 $failed = 0;
 
 foreach ($files as $file) {
-    $name   = basename($file);
+    $dir    = basename(dirname($file));
+    $name   = "$dir/" . basename($file);
     $header = parseHeader($file);
 
     if (isset($header['error'])) {
