@@ -257,6 +257,13 @@ class CodeGen {
         $this->asm->xor_(X86::R9, X86::R9);
         $this->asm->mov_imm32(X86::RCX, 10);
 
+        $this->asm->xor_(X86::RBX, X86::RBX);
+        $this->asm->test(X86::RAX, X86::RAX);
+        $jns_patch = $this->asm->jns_rel32();
+        $this->asm->mov_imm32(X86::RBX, 1);
+        $this->asm->neg(X86::RAX);
+        $this->asm->patch32($jns_patch, $this->asm->pos() - $jns_patch - 4);
+
         $loop_start = $this->asm->pos();
         $this->asm->dec(X86::R8);
         $this->asm->xor_(X86::RDX, X86::RDX);
@@ -266,6 +273,13 @@ class CodeGen {
         $this->asm->inc(X86::R9);
         $this->asm->test(X86::RAX, X86::RAX);
         $this->asm->jnz_to($loop_start);
+
+        $this->asm->test(X86::RBX, X86::RBX);
+        $jz_patch = $this->asm->jz_rel32();
+        $this->asm->dec(X86::R8);
+        $this->asm->store_byte_imm(X86::R8, 0x2D);
+        $this->asm->inc(X86::R9);
+        $this->asm->patch32($jz_patch, $this->asm->pos() - $jz_patch - 4);
 
         $this->asm->mov(X86::RSI, X86::R8);
         $this->asm->mov(X86::RDX, X86::R9);
