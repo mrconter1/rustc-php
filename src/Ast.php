@@ -117,6 +117,15 @@ class IdentNode {
     }
 }
 
+class BorrowNode {
+    public mixed $operand;
+    public int   $line;
+    public function __construct(mixed $operand, int $line) {
+        $this->operand = $operand;
+        $this->line    = $line;
+    }
+}
+
 class UnaryOpNode {
     public string $op;
     public mixed  $operand;

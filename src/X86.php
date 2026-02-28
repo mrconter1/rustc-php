@@ -163,6 +163,18 @@ class X86 {
         $this->emit("\x48\x0F\xB6\xC0");
     }
 
+    // lea reg, [base + disp8]
+    public function lea(int $reg, int $base, int $disp): void {
+        $rex = 0x48 | (($reg >> 3) << 2) | ($base >> 3);
+        if ($base === self::RSP || ($base & 7) === self::RSP) {
+            $modrm = 0x44 | (($reg & 7) << 3);
+            $this->emit(chr($rex) . "\x8D" . chr($modrm) . "\x24" . pack('c', $disp));
+        } else {
+            $modrm = 0x40 | (($reg & 7) << 3) | ($base & 7);
+            $this->emit(chr($rex) . "\x8D" . chr($modrm) . pack('c', $disp));
+        }
+    }
+
     // lea reg, [rsp + disp8]
     public function lea_rsp(int $reg, int $disp): void {
         $rex = 0x48 | (($reg >> 3) << 2);

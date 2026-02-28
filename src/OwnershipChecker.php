@@ -155,6 +155,11 @@ class OwnershipChecker {
             return;
         }
 
+        if ($expr instanceof BorrowNode) {
+            $this->checkExpr($expr->operand);
+            return;
+        }
+
         if ($expr instanceof UnaryOpNode) {
             $this->checkExpr($expr->operand);
             return;
@@ -186,6 +191,7 @@ class OwnershipChecker {
     }
 
     private function isCopy(string $type): bool {
+        if (str_starts_with($type, '&')) return true;
         return in_array($type, ['i32', 'bool']);
     }
 

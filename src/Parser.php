@@ -30,7 +30,12 @@ class Parser {
         while (!$this->check(Token::RPAREN)) {
             $pname = $this->expect(Token::IDENT)->value;
             $this->expect(Token::COLON);
-            $ptype = $this->expect(Token::IDENT)->value;
+            $ref = '';
+            if ($this->check(Token::AMP)) {
+                $ref = '&';
+                $this->pos++;
+            }
+            $ptype = $ref . $this->expect(Token::IDENT)->value;
             $params[] = ['name' => $pname, 'type' => $ptype];
             if ($this->check(Token::COMMA)) {
                 $this->pos++;
@@ -275,6 +280,12 @@ class Parser {
             $this->pos++;
             $operand = $this->parseUnary();
             return new UnaryOpNode('!', $operand, $line);
+        }
+        if ($this->check(Token::AMP)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $operand = $this->parsePrimary();
+            return new BorrowNode($operand, $line);
         }
         return $this->parsePrimary();
     }

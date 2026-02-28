@@ -77,7 +77,14 @@ class CodeGen {
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
         if ($expr instanceof IdentNode) {
-            return $this->vars[$expr->name]['type'] ?? 'i32';
+            $type = $this->vars[$expr->name]['type'] ?? 'i32';
+            return ltrim($type, '&');
+        }
+        if ($expr instanceof BorrowNode) {
+            if ($expr->operand instanceof IdentNode) {
+                return '&' . ($this->vars[$expr->operand->name]['type'] ?? 'i32');
+            }
+            return '&i32';
         }
         if ($expr instanceof BinaryOpNode) return 'i32';
         if ($expr instanceof CallNode) return 'i32';
@@ -323,7 +330,25 @@ class CodeGen {
             $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
             if ($var['type'] === 'String') {
                 $this->asm->load(X86::RDX, X86::RBP, -($var['offset'] - 8));
+            } elseif ($var['type'] === '&String') {
+                $this->asm->load(X86::RDX, X86::RAX, 8);
+                $this->asm->load(X86::RAX, X86::RAX, 0);
+            } elseif (str_starts_with($var['type'], '&')) {
+                $this->asm->load(X86::RAX, X86::RAX, 0);
             }
+            return;
+        }
+
+        if ($expr instanceof BorrowNode) {
+            if (!($expr->operand instanceof IdentNode)) {
+                throw new RuntimeException("Can only borrow variables on line {$expr->line}");
+            }
+            $name = $expr->operand->name;
+            if (!isset($this->vars[$name])) {
+                throw new RuntimeException("Undefined variable '$name' on line {$expr->line}");
+            }
+            $var = $this->vars[$name];
+            $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
             return;
         }
 
