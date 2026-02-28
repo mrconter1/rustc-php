@@ -112,6 +112,16 @@ class CodeGen {
             return;
         }
 
+        if ($stmt instanceof AssignNode) {
+            $this->generateExpr($stmt->value);
+            $var = $this->vars[$stmt->name];
+            $this->asm->store(X86::RBP, -$var['offset'], X86::RAX);
+            if ($var['type'] === 'String') {
+                $this->asm->store(X86::RBP, -($var['offset'] - 8), X86::RDX);
+            }
+            return;
+        }
+
         if ($stmt instanceof IfNode) {
             $this->generateIf($stmt);
             return;

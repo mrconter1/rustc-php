@@ -3,7 +3,7 @@
 require_once __DIR__ . '/Ast.php';
 
 class OwnershipChecker {
-    private array $vars = []; // name => ['type' => string, 'state' => 'owned'|'moved', 'moved_to' => string|null, 'moved_line' => int|null]
+    private array $vars = []; // name => ['type', 'state', 'mutable', 'moved_to', 'moved_line']
 
     public function check(ProgramNode $program): void {
         foreach ($program->functions as $fn) {
@@ -40,9 +40,41 @@ class OwnershipChecker {
             $this->vars[$stmt->name] = [
                 'type' => $type,
                 'state' => 'owned',
+                'mutable' => $stmt->mutable,
                 'moved_to' => null,
                 'moved_line' => null,
             ];
+            return;
+        }
+
+        if ($stmt instanceof AssignNode) {
+            if (!isset($this->vars[$stmt->name])) {
+                throw new RuntimeException("Undefined variable '{$stmt->name}' on line {$stmt->line}");
+            }
+            $var = $this->vars[$stmt->name];
+            if (!$var['mutable']) {
+                throw new RuntimeException(
+                    "Cannot assign twice to immutable variable '{$stmt->name}' on line {$stmt->line}"
+                );
+            }
+
+            $this->checkExpr($stmt->value);
+
+            $type = $this->exprType($stmt->value);
+            if ($stmt->value instanceof IdentNode && !$this->isCopy($type)) {
+                $src = $stmt->value->name;
+                if (isset($this->vars[$src])) {
+                    $this->vars[$src]['state'] = 'moved';
+                    $this->vars[$src]['moved_to'] = $stmt->name;
+                    $this->vars[$src]['moved_line'] = $stmt->line;
+                }
+            }
+
+            if ($var['state'] === 'moved') {
+                $this->vars[$stmt->name]['state'] = 'owned';
+                $this->vars[$stmt->name]['moved_to'] = null;
+                $this->vars[$stmt->name]['moved_line'] = null;
+            }
             return;
         }
 

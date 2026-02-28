@@ -22,12 +22,25 @@ class LetNode {
     public string  $name;
     public ?string $type_name;
     public mixed   $value;
+    public bool    $mutable;
     public int     $line;
-    public function __construct(string $name, ?string $type_name, mixed $value, int $line) {
+    public function __construct(string $name, ?string $type_name, mixed $value, bool $mutable, int $line) {
         $this->name      = $name;
         $this->type_name = $type_name;
         $this->value     = $value;
+        $this->mutable   = $mutable;
         $this->line      = $line;
+    }
+}
+
+class AssignNode {
+    public string $name;
+    public mixed  $value;
+    public int    $line;
+    public function __construct(string $name, mixed $value, int $line) {
+        $this->name  = $name;
+        $this->value = $value;
+        $this->line  = $line;
     }
 }
 

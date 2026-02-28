@@ -51,6 +51,15 @@ class Parser {
             return $this->parseMacroCall();
         }
         $expr = $this->parseExpr();
+
+        if ($expr instanceof IdentNode && $this->check(Token::EQ)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $value = $this->parseExpr();
+            $this->expect(Token::SEMICOLON);
+            return new AssignNode($expr->name, $value, $line);
+        }
+
         $this->expect(Token::SEMICOLON);
         return new ExprStmtNode($expr, $expr->line);
     }
@@ -112,6 +121,13 @@ class Parser {
 
     private function parseLet(): LetNode {
         $line = $this->expect(Token::LET)->line;
+
+        $mutable = false;
+        if ($this->check(Token::MUT)) {
+            $mutable = true;
+            $this->pos++;
+        }
+
         $name = $this->expect(Token::IDENT)->value;
 
         $type_name = null;
@@ -124,7 +140,7 @@ class Parser {
         $value = $this->parseExpr();
         $this->expect(Token::SEMICOLON);
 
-        return new LetNode($name, $type_name, $value, $line);
+        return new LetNode($name, $type_name, $value, $mutable, $line);
     }
 
     private function parseIf(): IfNode {
