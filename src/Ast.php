@@ -142,9 +142,31 @@ class IdentNode {
 
 class BorrowNode {
     public mixed $operand;
+    public bool  $mutable;
+    public int   $line;
+    public function __construct(mixed $operand, bool $mutable, int $line) {
+        $this->operand = $operand;
+        $this->mutable = $mutable;
+        $this->line    = $line;
+    }
+}
+
+class DerefNode {
+    public mixed $operand;
     public int   $line;
     public function __construct(mixed $operand, int $line) {
         $this->operand = $operand;
+        $this->line    = $line;
+    }
+}
+
+class DerefAssignNode {
+    public mixed $operand;
+    public mixed $value;
+    public int   $line;
+    public function __construct(mixed $operand, mixed $value, int $line) {
+        $this->operand = $operand;
+        $this->value   = $value;
         $this->line    = $line;
     }
 }

@@ -34,6 +34,10 @@ class Parser {
             if ($this->check(Token::AMP)) {
                 $ref = '&';
                 $this->pos++;
+                if ($this->check(Token::MUT)) {
+                    $ref = '&mut ';
+                    $this->pos++;
+                }
             }
             $ptype = $ref . $this->expect(Token::IDENT)->value;
             $params[] = ['name' => $pname, 'type' => $ptype];
@@ -109,6 +113,14 @@ class Parser {
             $value = $this->parseExpr();
             $this->expect(Token::SEMICOLON);
             return new AssignNode($expr->name, $value, $line);
+        }
+
+        if ($expr instanceof DerefNode && $this->check(Token::EQ)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $value = $this->parseExpr();
+            $this->expect(Token::SEMICOLON);
+            return new DerefAssignNode($expr->operand, $value, $line);
         }
 
         if ($this->check(Token::RBRACE)) {
@@ -188,7 +200,16 @@ class Parser {
         $type_name = null;
         if ($this->check(Token::COLON)) {
             $this->expect(Token::COLON);
-            $type_name = $this->expect(Token::IDENT)->value;
+            $ref = '';
+            if ($this->check(Token::AMP)) {
+                $ref = '&';
+                $this->pos++;
+                if ($this->check(Token::MUT)) {
+                    $ref = '&mut ';
+                    $this->pos++;
+                }
+            }
+            $type_name = $ref . $this->expect(Token::IDENT)->value;
         }
 
         $this->expect(Token::EQ);
@@ -304,11 +325,22 @@ class Parser {
             $operand = $this->parseUnary();
             return new UnaryOpNode('!', $operand, $line);
         }
+        if ($this->check(Token::STAR)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $operand = $this->parseUnary();
+            return new DerefNode($operand, $line);
+        }
         if ($this->check(Token::AMP)) {
             $line = $this->current()->line;
             $this->pos++;
+            $mutable = false;
+            if ($this->check(Token::MUT)) {
+                $mutable = true;
+                $this->pos++;
+            }
             $operand = $this->parsePrimary();
-            return new BorrowNode($operand, $line);
+            return new BorrowNode($operand, $mutable, $line);
         }
         return $this->parsePrimary();
     }

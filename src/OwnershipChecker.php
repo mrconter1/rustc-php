@@ -110,6 +110,23 @@ class OwnershipChecker {
             return;
         }
 
+        if ($stmt instanceof DerefAssignNode) {
+            $this->checkExpr($stmt->value);
+            if ($stmt->operand instanceof IdentNode) {
+                $name = $stmt->operand->name;
+                if (!isset($this->vars[$name])) {
+                    throw new RuntimeException("Undefined variable '$name' on line {$stmt->line}");
+                }
+                $var = $this->vars[$name];
+                if (!str_starts_with($var['type'], '&mut ')) {
+                    throw new RuntimeException(
+                        "Cannot assign through immutable reference '$name' on line {$stmt->line}"
+                    );
+                }
+            }
+            return;
+        }
+
         if ($stmt instanceof ReturnNode) {
             if ($stmt->value !== null) {
                 $this->checkExpr($stmt->value);
@@ -202,6 +219,19 @@ class OwnershipChecker {
 
         if ($expr instanceof BorrowNode) {
             $this->checkExpr($expr->operand);
+            if ($expr->mutable && $expr->operand instanceof IdentNode) {
+                $name = $expr->operand->name;
+                if (isset($this->vars[$name]) && !$this->vars[$name]['mutable']) {
+                    throw new RuntimeException(
+                        "Cannot borrow immutable variable '$name' as mutable on line {$expr->line}"
+                    );
+                }
+            }
+            return;
+        }
+
+        if ($expr instanceof DerefNode) {
+            $this->checkExpr($expr->operand);
             return;
         }
 
@@ -261,6 +291,7 @@ class OwnershipChecker {
     }
 
     private function isCopy(string $type): bool {
+        if (str_starts_with($type, '&mut ')) return false;
         if (str_starts_with($type, '&')) return true;
         return in_array($type, ['i32', 'bool']);
     }
@@ -273,11 +304,18 @@ class OwnershipChecker {
             return $this->vars[$expr->name]['type'] ?? 'i32';
         }
         if ($expr instanceof BorrowNode) {
+            $prefix = $expr->mutable ? '&mut ' : '&';
             if ($expr->operand instanceof IdentNode) {
                 $inner = $this->vars[$expr->operand->name]['type'] ?? 'i32';
-                return '&' . $inner;
+                return $prefix . $inner;
             }
-            return '&i32';
+            return $prefix . 'i32';
+        }
+        if ($expr instanceof DerefNode) {
+            $inner_type = $this->exprType($expr->operand);
+            if (str_starts_with($inner_type, '&mut ')) return substr($inner_type, 5);
+            if (str_starts_with($inner_type, '&')) return substr($inner_type, 1);
+            return $inner_type;
         }
         if ($expr instanceof UnaryOpNode) {
             if ($expr->op === '!') return 'bool';

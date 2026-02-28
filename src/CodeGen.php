@@ -89,13 +89,22 @@ class CodeGen {
         if ($expr instanceof StringFromNode) return 'String';
         if ($expr instanceof IdentNode) {
             $type = $this->vars[$expr->name]['type'] ?? 'i32';
-            return ltrim($type, '&');
+            if (str_starts_with($type, '&mut ')) return substr($type, 5);
+            if (str_starts_with($type, '&')) return substr($type, 1);
+            return $type;
         }
         if ($expr instanceof BorrowNode) {
+            $prefix = $expr->mutable ? '&mut ' : '&';
             if ($expr->operand instanceof IdentNode) {
-                return '&' . ($this->vars[$expr->operand->name]['type'] ?? 'i32');
+                return $prefix . ($this->vars[$expr->operand->name]['type'] ?? 'i32');
             }
-            return '&i32';
+            return $prefix . 'i32';
+        }
+        if ($expr instanceof DerefNode) {
+            $inner_type = $this->exprType($expr->operand);
+            if (str_starts_with($inner_type, '&mut ')) return substr($inner_type, 5);
+            if (str_starts_with($inner_type, '&')) return substr($inner_type, 1);
+            return $inner_type;
         }
         if ($expr instanceof BinaryOpNode) return 'i32';
         if ($expr instanceof IfNode) {
@@ -215,6 +224,18 @@ class CodeGen {
             $this->asm->store(X86::RBP, -$slot['offset'], X86::RAX);
             if ($slot['type'] === 'String') {
                 $this->asm->store(X86::RBP, -($slot['offset'] - 8), X86::RDX);
+            }
+            return;
+        }
+
+        if ($stmt instanceof DerefAssignNode) {
+            $this->generateExpr($stmt->value);
+            if ($stmt->operand instanceof IdentNode) {
+                $var = $this->vars[$stmt->operand->name];
+                $this->asm->push(X86::RAX);
+                $this->asm->load(X86::RCX, X86::RBP, -$var['offset']);
+                $this->asm->pop(X86::RAX);
+                $this->asm->store(X86::RCX, 0, X86::RAX);
             }
             return;
         }
@@ -434,10 +455,37 @@ class CodeGen {
             $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
             if ($var['type'] === 'String') {
                 $this->asm->load(X86::RDX, X86::RBP, -($var['offset'] - 8));
-            } elseif ($var['type'] === '&String') {
+            } elseif ($var['type'] === '&String' || $var['type'] === '&mut String') {
                 $this->asm->load(X86::RDX, X86::RAX, 8);
                 $this->asm->load(X86::RAX, X86::RAX, 0);
             } elseif (str_starts_with($var['type'], '&')) {
+                $this->asm->load(X86::RAX, X86::RAX, 0);
+            }
+            return;
+        }
+
+        if ($expr instanceof DerefNode) {
+            if ($expr->operand instanceof IdentNode) {
+                $name = $expr->operand->name;
+                if (!isset($this->vars[$name])) {
+                    throw new RuntimeException("Undefined variable '$name' on line {$expr->line}");
+                }
+                $var = $this->vars[$name];
+                $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
+                $inner_type = $var['type'];
+                if (str_starts_with($inner_type, '&mut ')) {
+                    $inner_type = substr($inner_type, 5);
+                } elseif (str_starts_with($inner_type, '&')) {
+                    $inner_type = substr($inner_type, 1);
+                }
+                if ($inner_type === 'String') {
+                    $this->asm->load(X86::RDX, X86::RAX, 8);
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                } else {
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                }
+            } else {
+                $this->generateExpr($expr->operand);
                 $this->asm->load(X86::RAX, X86::RAX, 0);
             }
             return;
