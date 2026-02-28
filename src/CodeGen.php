@@ -342,6 +342,21 @@ class CodeGen {
                     $this->asm->cqo();
                     $this->asm->idiv(X86::RCX);
                     break;
+                case '%':
+                    $this->asm->cqo();
+                    $this->asm->idiv(X86::RCX);
+                    $this->asm->mov(X86::RAX, X86::RDX);
+                    break;
+                case '&&': $this->asm->test(X86::RAX, X86::RCX);
+                           $this->asm->setcc(X86::CC_NE);
+                           $this->asm->movzx_rax_al();
+                           break;
+                case '||':
+                    $this->asm->add(X86::RAX, X86::RCX);
+                    $this->asm->test(X86::RAX, X86::RAX);
+                    $this->asm->setcc(X86::CC_NE);
+                    $this->asm->movzx_rax_al();
+                    break;
                 case '==': $this->emitCmp(X86::CC_E); break;
                 case '!=': $this->emitCmp(X86::CC_NE); break;
                 case '<':  $this->emitCmp(X86::CC_L); break;

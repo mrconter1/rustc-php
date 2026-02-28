@@ -143,6 +143,7 @@ class Lexer {
             '-' => new Token(Token::MINUS,     '-', $line),
             '*' => new Token(Token::STAR,      '*', $line),
             '/' => new Token(Token::SLASH,     '/', $line),
+            '%' => new Token(Token::PERCENT,  '%', $line),
             '=' => new Token(Token::EQ,        '=', $line),
             '!' => new Token(Token::BANG,      '!', $line),
             '<' => new Token(Token::LT,        '<', $line),

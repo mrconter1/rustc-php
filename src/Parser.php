@@ -198,7 +198,31 @@ class Parser {
     // --- expression parsing with precedence ---
 
     private function parseExpr(): mixed {
-        return $this->parseComparison();
+        return $this->parseLogicalOr();
+    }
+
+    private function parseLogicalOr(): mixed {
+        $left = $this->parseLogicalAnd();
+        while ($this->check(Token::OR)) {
+            $op    = $this->current()->value;
+            $line  = $this->current()->line;
+            $this->pos++;
+            $right = $this->parseLogicalAnd();
+            $left  = new BinaryOpNode($left, $op, $right, $line);
+        }
+        return $left;
+    }
+
+    private function parseLogicalAnd(): mixed {
+        $left = $this->parseComparison();
+        while ($this->check(Token::AND)) {
+            $op    = $this->current()->value;
+            $line  = $this->current()->line;
+            $this->pos++;
+            $right = $this->parseComparison();
+            $left  = new BinaryOpNode($left, $op, $right, $line);
+        }
+        return $left;
     }
 
     private function parseComparison(): mixed {
@@ -229,7 +253,7 @@ class Parser {
 
     private function parseMulDiv(): mixed {
         $left = $this->parsePrimary();
-        while ($this->check(Token::STAR) || $this->check(Token::SLASH)) {
+        while ($this->check(Token::STAR) || $this->check(Token::SLASH) || $this->check(Token::PERCENT)) {
             $op    = $this->current()->value;
             $line  = $this->current()->line;
             $this->pos++;

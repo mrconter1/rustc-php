@@ -36,7 +36,8 @@ class Token {
     const PLUS  = 'PLUS';  // +
     const MINUS = 'MINUS'; // -
     const STAR  = 'STAR';  // *
-    const SLASH = 'SLASH'; // /
+    const SLASH   = 'SLASH';   // /
+    const PERCENT = 'PERCENT'; // %
     const EQ    = 'EQ';    // =
     const EQEQ  = 'EQEQ';  // ==
     const NEQ   = 'NEQ';   // !=
