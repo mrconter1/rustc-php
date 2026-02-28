@@ -13,6 +13,7 @@ class CodeGen {
     private int    $code_base_addr;
 
     private array $func_addrs = [];
+    private array $func_sigs = [];
     private array $call_patches = [];
     private array $return_patches = [];
 
@@ -29,6 +30,14 @@ class CodeGen {
         $this->data_patches = [];
         $this->call_patches = [];
         $this->func_addrs = [];
+        $this->func_sigs = [];
+
+        foreach ($program->functions as $fn) {
+            $this->func_sigs[$fn->name] = [
+                'params'      => $fn->params,
+                'return_type' => $fn->return_type,
+            ];
+        }
 
         $this->emitEntryPoint();
 
@@ -87,7 +96,12 @@ class CodeGen {
             return '&i32';
         }
         if ($expr instanceof BinaryOpNode) return 'i32';
-        if ($expr instanceof CallNode) return 'i32';
+        if ($expr instanceof CallNode) {
+            if (isset($this->func_sigs[$expr->name])) {
+                return $this->func_sigs[$expr->name]['return_type'] ?? 'i32';
+            }
+            return 'i32';
+        }
         return 'i32';
     }
 
@@ -97,12 +111,16 @@ class CodeGen {
         $this->stack_size = 0;
         $this->return_patches = [];
 
+        $reg_idx = 0;
         foreach ($fn->params as $param) {
-            $this->stack_size += 8;
+            $size = ($param['type'] === 'String') ? 16 : 8;
+            $this->stack_size += $size;
             $this->vars[$param['name']] = [
-                'offset' => $this->stack_size,
-                'type'   => $param['type'],
+                'offset'  => $this->stack_size,
+                'type'    => $param['type'],
+                'reg_idx' => $reg_idx,
             ];
+            $reg_idx += ($param['type'] === 'String') ? 2 : 1;
         }
 
         $this->collectVars($fn->body);
@@ -118,9 +136,13 @@ class CodeGen {
             }
         }
 
-        foreach ($fn->params as $i => $param) {
+        foreach ($fn->params as $param) {
             $var = $this->vars[$param['name']];
-            $this->asm->store(X86::RBP, -$var['offset'], self::ARG_REGS[$i]);
+            $ri = $var['reg_idx'];
+            $this->asm->store(X86::RBP, -$var['offset'], self::ARG_REGS[$ri]);
+            if ($param['type'] === 'String') {
+                $this->asm->store(X86::RBP, -($var['offset'] - 8), self::ARG_REGS[$ri + 1]);
+            }
         }
 
         $this->generateBody($fn->body);
@@ -437,12 +459,28 @@ class CodeGen {
                 throw new RuntimeException("Functions with more than 6 arguments are not supported on line {$expr->line}");
             }
 
+            $sig = $this->func_sigs[$expr->name] ?? null;
+            $reg_idx = 0;
+            $param_reg_map = [];
+            for ($i = 0; $i < $n; $i++) {
+                $ptype = $sig ? $sig['params'][$i]['type'] : 'i32';
+                $param_reg_map[$i] = ['reg_idx' => $reg_idx, 'type' => $ptype];
+                $reg_idx += ($ptype === 'String') ? 2 : 1;
+            }
+
             for ($i = 0; $i < $n; $i++) {
                 $this->generateExpr($expr->args[$i]);
+                if ($param_reg_map[$i]['type'] === 'String') {
+                    $this->asm->push(X86::RDX);
+                }
                 $this->asm->push(X86::RAX);
             }
             for ($i = $n - 1; $i >= 0; $i--) {
-                $this->asm->pop(self::ARG_REGS[$i]);
+                $ri = $param_reg_map[$i]['reg_idx'];
+                $this->asm->pop(self::ARG_REGS[$ri]);
+                if ($param_reg_map[$i]['type'] === 'String') {
+                    $this->asm->pop(self::ARG_REGS[$ri + 1]);
+                }
             }
 
             $patch_pos = $this->asm->call_rel32();
