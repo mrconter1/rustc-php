@@ -209,6 +209,19 @@ class Parser {
 
         if ($token->type === Token::IDENT) {
             $this->pos++;
+            if ($this->check(Token::DCOLON)) {
+                $this->expect(Token::DCOLON);
+                $method = $this->expect(Token::IDENT)->value;
+                if ($token->value === 'String' && $method === 'from') {
+                    $this->expect(Token::LPAREN);
+                    $str = $this->expect(Token::STR_LIT)->value;
+                    $this->expect(Token::RPAREN);
+                    return new StringFromNode($str, $token->line);
+                }
+                throw new RuntimeException(
+                    "Unknown static method {$token->value}::$method on line {$token->line}"
+                );
+            }
             if ($this->check(Token::LPAREN)) {
                 $this->expect(Token::LPAREN);
                 $args = [];

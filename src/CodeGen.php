@@ -6,8 +6,8 @@ require_once __DIR__ . '/Elf.php';
 class CodeGen {
     private string $code = '';
     private string $data = '';
-    private array  $data_patches = []; // [code_offset, data_offset]
-    private array  $vars = [];
+    private array  $data_patches = [];
+    private array  $vars = []; // name => ['offset' => int, 'type' => string]
     private int    $stack_size = 0;
     private int    $code_base_addr;
 
@@ -43,6 +43,17 @@ class CodeGen {
         return $offset;
     }
 
+    private function exprType(mixed $expr): string {
+        if ($expr instanceof IntLitNode) return 'i32';
+        if ($expr instanceof BoolLitNode) return 'bool';
+        if ($expr instanceof StringFromNode) return 'String';
+        if ($expr instanceof IdentNode) {
+            return $this->vars[$expr->name]['type'] ?? 'i32';
+        }
+        if ($expr instanceof BinaryOpNode) return 'i32';
+        return 'i32';
+    }
+
     private function generateMain(FunctionNode $fn): void {
         $this->vars       = [];
         $this->stack_size = 0;
@@ -66,8 +77,13 @@ class CodeGen {
     private function collectVars(array $stmts): void {
         foreach ($stmts as $stmt) {
             if ($stmt instanceof LetNode) {
-                $this->stack_size += 8;
-                $this->vars[$stmt->name] = $this->stack_size;
+                $type = $stmt->type_name ?? $this->exprType($stmt->value);
+                $size = ($type === 'String') ? 16 : 8;
+                $this->stack_size += $size;
+                $this->vars[$stmt->name] = [
+                    'offset' => $this->stack_size,
+                    'type'   => $type,
+                ];
             }
             if ($stmt instanceof IfNode) {
                 $this->collectVars($stmt->then_body);
@@ -87,8 +103,13 @@ class CodeGen {
     private function generateStmt(mixed $stmt): void {
         if ($stmt instanceof LetNode) {
             $this->generateExpr($stmt->value);
-            $offset = $this->vars[$stmt->name];
-            $this->emit("\x48\x89\x45" . pack('c', -$offset));      // mov [rbp-offset], rax
+            $var = $this->vars[$stmt->name];
+            // mov [rbp-offset], rax (pointer or i32 value)
+            $this->emit("\x48\x89\x45" . pack('c', -$var['offset']));
+            if ($var['type'] === 'String') {
+                // mov [rbp-(offset-8)], rdx (string length)
+                $this->emit("\x48\x89\x55" . pack('c', -($var['offset'] - 8)));
+            }
             return;
         }
 
@@ -125,8 +146,13 @@ class CodeGen {
             if (is_string($part)) {
                 $this->emitWriteString($part);
             } else {
+                $type = $this->exprType($part);
                 $this->generateExpr($part);
-                $this->emitPrintInt();
+                if ($type === 'String') {
+                    $this->emitPrintString();
+                } else {
+                    $this->emitPrintInt();
+                }
             }
         }
     }
@@ -137,24 +163,27 @@ class CodeGen {
 
         $this->emit("\x48\xC7\xC0\x01\x00\x00\x00");        // mov rax, 1 (write)
         $this->emit("\x48\xC7\xC7\x01\x00\x00\x00");        // mov rdi, 1 (stdout)
-        // movabs rsi, <data address placeholder>
-        $this->emit("\x48\xBE");
+        $this->emit("\x48\xBE");                              // movabs rsi, <addr>
         $this->data_patches[] = [strlen($this->code), $data_offset];
         $this->emit("\x00\x00\x00\x00\x00\x00\x00\x00");
         $this->emit("\x48\xC7\xC2" . pack('V', $len));      // mov rdx, len
         $this->emit("\x0F\x05");                              // syscall
     }
 
-    private function emitPrintInt(): void {
-        // rax = integer to print
-        // Converts to decimal ASCII in a stack buffer, then writes to stdout
+    private function emitPrintString(): void {
+        // rax = string pointer, rdx = string length
+        $this->emit("\x48\x89\xC6");                          // mov rsi, rax
+        $this->emit("\x48\xC7\xC0\x01\x00\x00\x00");         // mov rax, 1 (write)
+        $this->emit("\x48\xC7\xC7\x01\x00\x00\x00");         // mov rdi, 1 (stdout)
+        $this->emit("\x0F\x05");                              // syscall
+    }
 
+    private function emitPrintInt(): void {
         $this->emit("\x48\x83\xEC\x20");                     // sub rsp, 32
         $this->emit("\x4C\x8D\x44\x24\x1F");                 // lea r8, [rsp+31]
         $this->emit("\x4D\x31\xC9");                          // xor r9, r9
         $this->emit("\x48\xC7\xC1\x0A\x00\x00\x00");         // mov rcx, 10
 
-        // loop: (23 bytes)
         $this->emit("\x49\xFF\xC8");                          // dec r8
         $this->emit("\x48\x31\xD2");                          // xor rdx, rdx
         $this->emit("\x48\xF7\xF1");                          // div rcx
@@ -212,12 +241,29 @@ class CodeGen {
             return;
         }
 
+        if ($expr instanceof StringFromNode) {
+            $data_offset = $this->addData($expr->value);
+            $len = strlen($expr->value);
+            // movabs rax, <data address placeholder>
+            $this->emit("\x48\xB8");
+            $this->data_patches[] = [strlen($this->code), $data_offset];
+            $this->emit("\x00\x00\x00\x00\x00\x00\x00\x00");
+            // mov rdx, len
+            $this->emit("\x48\xC7\xC2" . pack('V', $len));
+            return;
+        }
+
         if ($expr instanceof IdentNode) {
             if (!isset($this->vars[$expr->name])) {
                 throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
             }
-            $offset = $this->vars[$expr->name];
-            $this->emit("\x48\x8B\x45" . pack('c', -$offset));
+            $var = $this->vars[$expr->name];
+            // mov rax, [rbp-offset]
+            $this->emit("\x48\x8B\x45" . pack('c', -$var['offset']));
+            if ($var['type'] === 'String') {
+                // mov rdx, [rbp-(offset-8)]
+                $this->emit("\x48\x8B\x55" . pack('c', -($var['offset'] - 8)));
+            }
             return;
         }
 
@@ -230,17 +276,17 @@ class CodeGen {
 
             switch ($expr->op) {
                 case '+':
-                    $this->emit("\x48\x01\xC8");               // add rax, rcx
+                    $this->emit("\x48\x01\xC8");
                     break;
                 case '-':
-                    $this->emit("\x48\x29\xC8");               // sub rax, rcx
+                    $this->emit("\x48\x29\xC8");
                     break;
                 case '*':
-                    $this->emit("\x48\x0F\xAF\xC1");           // imul rax, rcx
+                    $this->emit("\x48\x0F\xAF\xC1");
                     break;
                 case '/':
-                    $this->emit("\x48\x99");                   // cqo
-                    $this->emit("\x48\xF7\xF9");               // idiv rcx
+                    $this->emit("\x48\x99");
+                    $this->emit("\x48\xF7\xF9");
                     break;
                 case '==':
                     $this->emitComparison("\x0F\x94");
