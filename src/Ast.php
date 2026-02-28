@@ -8,13 +8,26 @@ class ProgramNode {
 }
 
 class FunctionNode {
-    public string $name;
-    public array  $body;
-    public int    $line;
-    public function __construct(string $name, array $body, int $line) {
-        $this->name = $name;
-        $this->body = $body;
-        $this->line = $line;
+    public string  $name;
+    public array   $params;      // [['name' => string, 'type' => string], ...]
+    public ?string $return_type;
+    public array   $body;
+    public int     $line;
+    public function __construct(string $name, array $params, ?string $return_type, array $body, int $line) {
+        $this->name        = $name;
+        $this->params      = $params;
+        $this->return_type = $return_type;
+        $this->body        = $body;
+        $this->line        = $line;
+    }
+}
+
+class ReturnNode {
+    public mixed $value;
+    public int   $line;
+    public function __construct(mixed $value, int $line) {
+        $this->value = $value;
+        $this->line  = $line;
     }
 }
 

@@ -212,6 +212,24 @@ class X86 {
         $this->emit("\x75" . pack('c', $offset));
     }
 
+    // call rel32 — returns position of the 4-byte offset for patching
+    public function call_rel32(): int {
+        $this->emit("\xE8");
+        $pos = strlen($this->buffer);
+        $this->emit("\x00\x00\x00\x00");
+        return $pos;
+    }
+
+    // ret
+    public function ret(): void { $this->emit("\xC3"); }
+
+    // sub reg64, imm32
+    public function sub_imm32(int $reg, int $val): void {
+        $rex = 0x48 | ($reg >> 3);
+        $modrm = 0xE8 | ($reg & 7);
+        $this->emit(chr($rex) . "\x81" . chr($modrm) . pack('V', $val));
+    }
+
     // syscall
     public function syscall(): void { $this->emit("\x0F\x05"); }
 

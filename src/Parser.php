@@ -24,10 +24,28 @@ class Parser {
         $this->expect(Token::FN);
         $name = $this->expect(Token::IDENT)->value;
         $line = $this->current()->line;
+
         $this->expect(Token::LPAREN);
+        $params = [];
+        while (!$this->check(Token::RPAREN)) {
+            $pname = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::COLON);
+            $ptype = $this->expect(Token::IDENT)->value;
+            $params[] = ['name' => $pname, 'type' => $ptype];
+            if ($this->check(Token::COMMA)) {
+                $this->pos++;
+            }
+        }
         $this->expect(Token::RPAREN);
+
+        $return_type = null;
+        if ($this->check(Token::ARROW)) {
+            $this->pos++;
+            $return_type = $this->expect(Token::IDENT)->value;
+        }
+
         $body = $this->parseBlock();
-        return new FunctionNode($name, $body, $line);
+        return new FunctionNode($name, $params, $return_type, $body, $line);
     }
 
     private function parseBlock(): array {
@@ -49,6 +67,12 @@ class Parser {
         }
         if ($this->check(Token::WHILE)) {
             return $this->parseWhile();
+        }
+        if ($this->check(Token::RETURN)) {
+            $line = $this->expect(Token::RETURN)->line;
+            $value = $this->parseExpr();
+            $this->expect(Token::SEMICOLON);
+            return new ReturnNode($value, $line);
         }
         if ($this->check(Token::MACRO)) {
             return $this->parseMacroCall();

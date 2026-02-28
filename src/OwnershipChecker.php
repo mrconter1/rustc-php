@@ -13,6 +13,15 @@ class OwnershipChecker {
 
     private function checkFunction(FunctionNode $fn): void {
         $this->vars = [];
+        foreach ($fn->params as $param) {
+            $this->vars[$param['name']] = [
+                'type' => $param['type'],
+                'state' => 'owned',
+                'mutable' => false,
+                'moved_to' => null,
+                'moved_line' => null,
+            ];
+        }
         $this->checkBody($fn->body);
     }
 
@@ -75,6 +84,11 @@ class OwnershipChecker {
                 $this->vars[$stmt->name]['moved_to'] = null;
                 $this->vars[$stmt->name]['moved_line'] = null;
             }
+            return;
+        }
+
+        if ($stmt instanceof ReturnNode) {
+            $this->checkExpr($stmt->value);
             return;
         }
 

@@ -7,10 +7,16 @@ require_once __DIR__ . '/X86.php';
 class CodeGen {
     private X86    $asm;
     private string $data = '';
-    private array  $data_patches = []; // [asm_pos, data_offset]
+    private array  $data_patches = [];
     private array  $vars = [];
     private int    $stack_size = 0;
     private int    $code_base_addr;
+
+    private array $func_addrs = [];
+    private array $call_patches = [];
+    private array $return_patches = [];
+
+    private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
     public function __construct() {
         $this->asm = new X86();
@@ -18,17 +24,39 @@ class CodeGen {
 
     public function generate(ProgramNode $program, int $code_base_addr): string {
         $this->code_base_addr = $code_base_addr;
+        $this->asm->reset();
+        $this->data = '';
+        $this->data_patches = [];
+        $this->call_patches = [];
+        $this->func_addrs = [];
+
+        $this->emitEntryPoint();
 
         foreach ($program->functions as $fn) {
-            if ($fn->name === 'main') {
-                $this->generateMain($fn);
-            } else {
-                throw new RuntimeException("Unknown function '{$fn->name}' on line {$fn->line}");
-            }
+            $this->generateFunction($fn);
         }
 
+        $this->patchCalls();
         $this->patchDataAddresses();
         return $this->asm->getBuffer() . $this->data;
+    }
+
+    private function emitEntryPoint(): void {
+        $patch_pos = $this->asm->call_rel32();
+        $this->call_patches[] = [$patch_pos, 'main'];
+        $this->asm->mov(X86::RDI, X86::RAX);
+        $this->asm->mov_imm32(X86::RAX, 60);
+        $this->asm->syscall();
+    }
+
+    private function patchCalls(): void {
+        foreach ($this->call_patches as [$patch_pos, $func_name]) {
+            if (!isset($this->func_addrs[$func_name])) {
+                throw new RuntimeException("Undefined function '$func_name'");
+            }
+            $target = $this->func_addrs[$func_name];
+            $this->asm->patch32($patch_pos, $target - $patch_pos - 4);
+        }
     }
 
     private function patchDataAddresses(): void {
@@ -52,27 +80,54 @@ class CodeGen {
             return $this->vars[$expr->name]['type'] ?? 'i32';
         }
         if ($expr instanceof BinaryOpNode) return 'i32';
+        if ($expr instanceof CallNode) return 'i32';
         return 'i32';
     }
 
-    private function generateMain(FunctionNode $fn): void {
-        $this->vars       = [];
+    private function generateFunction(FunctionNode $fn): void {
+        $this->func_addrs[$fn->name] = $this->asm->pos();
+        $this->vars = [];
         $this->stack_size = 0;
-        $this->data       = '';
-        $this->data_patches = [];
-        $this->asm->reset();
+        $this->return_patches = [];
+
+        foreach ($fn->params as $param) {
+            $this->stack_size += 8;
+            $this->vars[$param['name']] = [
+                'offset' => $this->stack_size,
+                'type'   => $param['type'],
+            ];
+        }
 
         $this->collectVars($fn->body);
 
-        if ($this->stack_size > 0) {
-            $this->asm->push(X86::RBP);
-            $this->asm->mov(X86::RBP, X86::RSP);
-            $aligned = ($this->stack_size + 15) & ~15;
-            $this->asm->sub_imm8(X86::RSP, $aligned);
+        $this->asm->push(X86::RBP);
+        $this->asm->mov(X86::RBP, X86::RSP);
+        $aligned = ($this->stack_size + 15) & ~15;
+        if ($aligned > 0) {
+            if ($aligned <= 127) {
+                $this->asm->sub_imm8(X86::RSP, $aligned);
+            } else {
+                $this->asm->sub_imm32(X86::RSP, $aligned);
+            }
+        }
+
+        foreach ($fn->params as $i => $param) {
+            $var = $this->vars[$param['name']];
+            $this->asm->store(X86::RBP, -$var['offset'], self::ARG_REGS[$i]);
         }
 
         $this->generateBody($fn->body);
-        $this->emitExit(0);
+
+        $this->asm->xor_(X86::RAX, X86::RAX);
+
+        $epilogue_pos = $this->asm->pos();
+        foreach ($this->return_patches as $patch_pos) {
+            $this->asm->patch32($patch_pos, $epilogue_pos - $patch_pos - 4);
+        }
+
+        $this->asm->mov(X86::RSP, X86::RBP);
+        $this->asm->pop(X86::RBP);
+        $this->asm->ret();
     }
 
     private function collectVars(array $stmts): void {
@@ -125,6 +180,13 @@ class CodeGen {
             return;
         }
 
+        if ($stmt instanceof ReturnNode) {
+            $this->generateExpr($stmt->value);
+            $jmp_patch = $this->asm->jmp_rel32();
+            $this->return_patches[] = $jmp_patch;
+            return;
+        }
+
         if ($stmt instanceof IfNode) {
             $this->generateIf($stmt);
             return;
@@ -141,16 +203,6 @@ class CodeGen {
         }
 
         if ($stmt instanceof ExprStmtNode) {
-            if ($stmt->expr instanceof CallNode && $stmt->expr->name === 'exit') {
-                if (count($stmt->expr->args) !== 1) {
-                    throw new RuntimeException("exit() takes exactly 1 argument on line {$stmt->line}");
-                }
-                $this->generateExpr($stmt->expr->args[0]);
-                $this->asm->mov(X86::RDI, X86::RAX);
-                $this->asm->mov_imm32(X86::RAX, 60);
-                $this->asm->syscall();
-                return;
-            }
             $this->generateExpr($stmt->expr);
             return;
         }
@@ -303,7 +355,33 @@ class CodeGen {
         }
 
         if ($expr instanceof CallNode) {
-            throw new RuntimeException("Function call '{$expr->name}' not supported in expression context on line {$expr->line}");
+            if ($expr->name === 'exit') {
+                if (count($expr->args) !== 1) {
+                    throw new RuntimeException("exit() takes exactly 1 argument on line {$expr->line}");
+                }
+                $this->generateExpr($expr->args[0]);
+                $this->asm->mov(X86::RDI, X86::RAX);
+                $this->asm->mov_imm32(X86::RAX, 60);
+                $this->asm->syscall();
+                return;
+            }
+
+            $n = count($expr->args);
+            if ($n > 6) {
+                throw new RuntimeException("Functions with more than 6 arguments are not supported on line {$expr->line}");
+            }
+
+            for ($i = 0; $i < $n; $i++) {
+                $this->generateExpr($expr->args[$i]);
+                $this->asm->push(X86::RAX);
+            }
+            for ($i = $n - 1; $i >= 0; $i--) {
+                $this->asm->pop(self::ARG_REGS[$i]);
+            }
+
+            $patch_pos = $this->asm->call_rel32();
+            $this->call_patches[] = [$patch_pos, $expr->name];
+            return;
         }
 
         throw new RuntimeException("Unknown expression type: " . get_class($expr));
@@ -313,15 +391,5 @@ class CodeGen {
         $this->asm->cmp(X86::RAX, X86::RCX);
         $this->asm->setcc($cc);
         $this->asm->movzx_rax_al();
-    }
-
-    private function emitExit(int $code): void {
-        $this->asm->mov_imm32(X86::RAX, 60);
-        if ($code === 0) {
-            $this->asm->xor_(X86::RDI, X86::RDI);
-        } else {
-            $this->asm->mov_imm32(X86::RDI, $code);
-        }
-        $this->asm->syscall();
     }
 }
