@@ -133,6 +133,13 @@ class X86 {
         $this->emit(chr($rex) . "\xF7" . chr($modrm));
     }
 
+    // neg reg64 (two's complement negate)
+    public function neg(int $reg): void {
+        $rex = 0x48 | ($reg >> 3);
+        $modrm = 0xD8 | ($reg & 7); // /3
+        $this->emit(chr($rex) . "\xF7" . chr($modrm));
+    }
+
     // inc/dec reg64
     public function inc(int $reg): void {
         $rex = 0x48 | ($reg >> 3);

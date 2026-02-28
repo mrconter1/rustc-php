@@ -327,6 +327,18 @@ class CodeGen {
             return;
         }
 
+        if ($expr instanceof UnaryOpNode) {
+            $this->generateExpr($expr->operand);
+            if ($expr->op === '-') {
+                $this->asm->neg(X86::RAX);
+            } elseif ($expr->op === '!') {
+                $this->asm->test(X86::RAX, X86::RAX);
+                $this->asm->setcc(X86::CC_E);
+                $this->asm->movzx_rax_al();
+            }
+            return;
+        }
+
         if ($expr instanceof BinaryOpNode) {
             $this->generateExpr($expr->left);
             $this->asm->push(X86::RAX);

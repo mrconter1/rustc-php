@@ -155,6 +155,11 @@ class OwnershipChecker {
             return;
         }
 
+        if ($expr instanceof UnaryOpNode) {
+            $this->checkExpr($expr->operand);
+            return;
+        }
+
         if ($expr instanceof BinaryOpNode) {
             $this->checkExpr($expr->left);
             $this->checkExpr($expr->right);

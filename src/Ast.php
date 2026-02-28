@@ -117,6 +117,17 @@ class IdentNode {
     }
 }
 
+class UnaryOpNode {
+    public string $op;
+    public mixed  $operand;
+    public int    $line;
+    public function __construct(string $op, mixed $operand, int $line) {
+        $this->op      = $op;
+        $this->operand = $operand;
+        $this->line    = $line;
+    }
+}
+
 class BinaryOpNode {
     public mixed  $left;
     public string $op;

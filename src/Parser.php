@@ -252,15 +252,31 @@ class Parser {
     }
 
     private function parseMulDiv(): mixed {
-        $left = $this->parsePrimary();
+        $left = $this->parseUnary();
         while ($this->check(Token::STAR) || $this->check(Token::SLASH) || $this->check(Token::PERCENT)) {
             $op    = $this->current()->value;
             $line  = $this->current()->line;
             $this->pos++;
-            $right = $this->parsePrimary();
+            $right = $this->parseUnary();
             $left  = new BinaryOpNode($left, $op, $right, $line);
         }
         return $left;
+    }
+
+    private function parseUnary(): mixed {
+        if ($this->check(Token::MINUS)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $operand = $this->parseUnary();
+            return new UnaryOpNode('-', $operand, $line);
+        }
+        if ($this->check(Token::BANG)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $operand = $this->parseUnary();
+            return new UnaryOpNode('!', $operand, $line);
+        }
+        return $this->parsePrimary();
     }
 
     private function parsePrimary(): mixed {
