@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/src/Lexer.php';
 require_once __DIR__ . '/src/Parser.php';
+require_once __DIR__ . '/src/OwnershipChecker.php';
 require_once __DIR__ . '/src/CodeGen.php';
 require_once __DIR__ . '/src/Elf.php';
 
@@ -47,6 +48,7 @@ $source = ltrim($source, "\xEF\xBB\xBF");
 try {
     $tokens  = (new Lexer($source))->tokenize();
     $ast     = (new Parser($tokens))->parse();
+    (new OwnershipChecker())->check($ast);
     $code    = (new CodeGen())->generate($ast, Elf::LOAD_ADDR + Elf::CODE_OFFSET);
     (new Elf($code))->write($output);
     echo "Compiled $input -> $output\n";
