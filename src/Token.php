@@ -39,6 +39,8 @@ class Token {
     const RPAREN    = 'RPAREN';    // )
     const LBRACE    = 'LBRACE';    // {
     const RBRACE    = 'RBRACE';    // }
+    const LBRACKET  = 'LBRACKET';  // [
+    const RBRACKET  = 'RBRACKET';  // ]
     const SEMICOLON = 'SEMICOLON'; // ;
     const COLON     = 'COLON';     // :
     const DCOLON    = 'DCOLON';    // ::

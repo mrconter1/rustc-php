@@ -51,6 +51,7 @@ class OwnershipChecker {
             ];
         }
 
+        $this->func_sigs['str::len'] = ['params' => [['name' => 'self', 'type' => '&str']], 'return_type' => 'i32', 'builtin' => true];
         foreach ($program->impls as $impl) {
             foreach ($impl->functions as $fn) {
                 $mangled = "{$impl->struct_name}::{$fn->name}";
@@ -412,8 +413,9 @@ class OwnershipChecker {
 
         if ($expr instanceof BorrowNode) {
             $this->checkExpr($expr->operand);
-            if ($expr->mutable && $expr->operand instanceof IdentNode) {
-                $name = $expr->operand->name;
+            $inner = $expr->operand instanceof DerefNode ? $expr->operand->operand : $expr->operand;
+            if ($expr->mutable && $inner instanceof IdentNode) {
+                $name = $inner->name;
                 if (isset($this->vars[$name]) && !$this->vars[$name]['mutable']) {
                     throw new RuntimeException(
                         "Cannot borrow immutable variable '$name' as mutable on line {$expr->line}"
@@ -556,6 +558,11 @@ class OwnershipChecker {
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
+        if ($expr instanceof StrSliceNode) return '&str';
+        if ($expr instanceof IndexNode) {
+            $obj_type = $this->exprType($expr->object);
+            return 'i32';
+        }
         if ($expr instanceof StructLitNode) return $expr->struct_name;
         if ($expr instanceof EnumVariantNode) return $expr->enum_name;
         if ($expr instanceof MatchNode) {
@@ -591,6 +598,12 @@ class OwnershipChecker {
             $prefix = $expr->mutable ? '&mut ' : '&';
             if ($expr->operand instanceof IdentNode) {
                 $inner = $this->vars[$expr->operand->name]['type'] ?? 'i32';
+                return $prefix . $inner;
+            }
+            if ($expr->operand instanceof DerefNode && $expr->operand->operand instanceof IdentNode) {
+                $inner = $this->vars[$expr->operand->operand->name]['type'] ?? 'i32';
+                if ($inner === 'String') return '&str';
+                if ($inner === '&String' || $inner === '&mut String') return '&str';
                 return $prefix . $inner;
             }
             return $prefix . 'i32';

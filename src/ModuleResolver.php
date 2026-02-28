@@ -615,6 +615,9 @@ class ModuleResolver {
         if ($expr instanceof FieldAccessNode) {
             return new FieldAccessNode($this->rewriteExpr($expr->object, $name_map, $prefix), $expr->field_name, $expr->line);
         }
+        if ($expr instanceof IndexNode) {
+            return new IndexNode($this->rewriteExpr($expr->object, $name_map, $prefix), $this->rewriteExpr($expr->index, $name_map, $prefix), $expr->line);
+        }
         if ($expr instanceof IfNode) {
             return $this->rewriteStmt($expr, $name_map, $prefix);
         }

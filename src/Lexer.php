@@ -150,6 +150,8 @@ class Lexer {
             ')' => new Token(Token::RPAREN,    ')', $line),
             '{' => new Token(Token::LBRACE,    '{', $line),
             '}' => new Token(Token::RBRACE,    '}', $line),
+            '[' => new Token(Token::LBRACKET, '[', $line),
+            ']' => new Token(Token::RBRACKET, ']', $line),
             ';' => new Token(Token::SEMICOLON, ';', $line),
             ',' => new Token(Token::COMMA,     ',', $line),
             '.' => new Token(Token::DOT,       '.', $line),

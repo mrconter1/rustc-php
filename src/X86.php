@@ -60,6 +60,19 @@ class X86 {
         }
     }
 
+    // mov reg32, [base + disp8] (zero-extends to 64-bit)
+    public function load32(int $reg, int $base, int $disp): void {
+        $rex = (($reg >> 3) << 2) | ($base >> 3);
+        if ($rex !== 0) $this->emit(chr(0x40 | $rex));
+        if ($base === self::RSP || ($base & 7) === self::RSP) {
+            $modrm = 0x44 | (($reg & 7) << 3);
+            $this->emit("\x8B" . chr($modrm) . "\x24" . pack('c', $disp));
+        } else {
+            $modrm = 0x40 | (($reg & 7) << 3) | ($base & 7);
+            $this->emit("\x8B" . chr($modrm) . pack('c', $disp));
+        }
+    }
+
     // mov [base + disp8], reg64
     public function store(int $base, int $disp, int $reg): void {
         $rex = 0x48 | (($reg >> 3) << 2) | ($base >> 3);
@@ -117,6 +130,13 @@ class X86 {
         $this->emit(chr($rex) . "\x0F\xAF" . chr($modrm));
     }
 
+    // imul reg64, reg64, imm8
+    public function imul_imm8(int $dst, int $src, int $imm): void {
+        $rex = 0x48 | (($dst >> 3) << 2) | ($src >> 3);
+        $modrm = 0xC0 | (($dst & 7) << 3) | ($src & 7);
+        $this->emit(chr($rex) . "\x6B" . chr($modrm) . pack('C', $imm & 0xFF));
+    }
+
     // cqo (sign-extend rax into rdx:rax)
     public function cqo(): void { $this->emit("\x48\x99"); }
 
@@ -161,6 +181,24 @@ class X86 {
     // movzx rax, al
     public function movzx_rax_al(): void {
         $this->emit("\x48\x0F\xB6\xC0");
+    }
+
+    // movzx rax, byte [base + disp]
+    public function movzx_rax_byte_at(int $base, int $disp): void {
+        $rex = 0x48 | ($base >> 3);
+        if ($base === self::RSP || ($base & 7) === self::RSP) {
+            $modrm = 0x04 | (0 << 3);
+            $sib = 0x24;
+            $this->emit(chr($rex) . "\x0F\xB6" . chr($modrm) . chr($sib) . pack('c', $disp));
+        } else {
+            if ($disp === 0) {
+                $modrm = 0x00 | (0 << 3) | ($base & 7);
+                $this->emit(chr($rex) . "\x0F\xB6" . chr($modrm));
+            } else {
+                $modrm = 0x40 | (0 << 3) | ($base & 7);
+                $this->emit(chr($rex) . "\x0F\xB6" . chr($modrm) . pack('c', $disp));
+            }
+        }
     }
 
     // lea reg, [base + disp8]

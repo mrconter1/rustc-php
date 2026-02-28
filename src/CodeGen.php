@@ -140,6 +140,8 @@ class CodeGen {
 
     private function isFatType(string $type): bool {
         if ($type === 'String') return true;
+        if ($type === 'str' || $type === '&str' || $type === '&mut str') return true;
+        if (preg_match('/^&(mut )?\[.+\]$/', $type)) return true;
         if (isset($this->enum_defs[$type]) && $this->enum_defs[$type]['has_payload']) return true;
         if (isset($this->struct_defs[$type]) && $this->struct_defs[$type]['size'] > 8) return true;
         return false;
@@ -149,6 +151,7 @@ class CodeGen {
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
+        if ($expr instanceof StrSliceNode) return '&str';
         if ($expr instanceof StructLitNode) return $expr->struct_name;
         if ($expr instanceof EnumVariantNode) return $expr->enum_name;
         if ($expr instanceof MatchNode) {
@@ -194,6 +197,12 @@ class CodeGen {
             return $inner_type;
         }
         if ($expr instanceof BinaryOpNode) return 'i32';
+        if ($expr instanceof IndexNode) {
+            $obj_type = $this->exprType($expr->object);
+            if ($obj_type === '&str' || $obj_type === '&mut str' || $obj_type === 'str') return 'i32';
+            if (preg_match('/^&(mut )?\[i32\]$/', $obj_type)) return 'i32';
+            return 'i32';
+        }
         if ($expr instanceof IfNode) {
             if (!empty($expr->then_body)) {
                 $last = end($expr->then_body);
@@ -475,7 +484,7 @@ class CodeGen {
             } else {
                 $type = $this->exprType($part);
                 $this->generateExpr($part);
-                if ($type === 'String') {
+                if ($type === 'String' || $type === '&str' || $type === '&mut str' || $type === 'str') {
                     $this->emitPrintString();
                 } else {
                     $this->emitPrintInt();
@@ -609,6 +618,13 @@ class CodeGen {
             $this->asm->mov_imm32(X86::RDX, strlen($expr->value));
             return;
         }
+        if ($expr instanceof StrSliceNode) {
+            $data_offset = $this->addData($expr->value);
+            $patch_pos = $this->asm->mov_imm64(X86::RAX);
+            $this->data_patches[] = [$patch_pos, $data_offset];
+            $this->asm->mov_imm32(X86::RDX, strlen($expr->value));
+            return;
+        }
 
         if ($expr instanceof StructLitNode) {
             $sd = $this->struct_defs[$expr->struct_name];
@@ -720,6 +736,24 @@ class CodeGen {
         }
 
         if ($expr instanceof BorrowNode) {
+            if ($expr->operand instanceof DerefNode && $expr->operand->operand instanceof IdentNode) {
+                $name = $expr->operand->operand->name;
+                if (!isset($this->vars[$name])) {
+                    throw new RuntimeException("Undefined variable '$name' on line {$expr->line}");
+                }
+                $var = $this->vars[$name];
+                if ($var['type'] === 'String') {
+                    $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
+                    $this->asm->load(X86::RDX, X86::RBP, -($var['offset'] - 8));
+                    return;
+                }
+                if ($var['type'] === '&String' || $var['type'] === '&mut String') {
+                    $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
+                    $this->asm->load(X86::RDX, X86::RAX, 8);
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                    return;
+                }
+            }
             if (!($expr->operand instanceof IdentNode)) {
                 throw new RuntimeException("Can only borrow variables on line {$expr->line}");
             }
@@ -839,6 +873,11 @@ class CodeGen {
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
 
             $mangled = "$base_type::{$expr->method_name}";
+            if ($mangled === 'str::len' && count($expr->args) === 0) {
+                $this->generateExpr($expr->receiver);
+                $this->asm->mov(X86::RAX, X86::RDX);
+                return;
+            }
             $sig = $this->func_sigs[$mangled];
 
             $n = count($expr->args);
@@ -898,6 +937,29 @@ class CodeGen {
 
             $patch_pos = $this->asm->call_rel32();
             $this->call_patches[] = [$patch_pos, $mangled];
+            return;
+        }
+
+        if ($expr instanceof IndexNode) {
+            $obj_type = $this->exprType($expr->object);
+            $this->generateExpr($expr->object);
+            $this->asm->push(X86::RDX);
+            $this->asm->push(X86::RAX);
+            $this->generateExpr($expr->index);
+            $this->asm->mov(X86::RCX, X86::RAX);
+            $this->asm->pop(X86::RAX);
+            $this->asm->pop(X86::RDX);
+            if ($obj_type === '&str' || $obj_type === '&mut str' || $obj_type === 'str') {
+                $this->asm->add(X86::RAX, X86::RCX);
+                $this->asm->movzx_rax_byte_at(X86::RAX, 0);
+            } elseif (preg_match('/^&(mut )?\[i32\]$/', $obj_type)) {
+                $this->asm->imul_imm8(X86::RCX, X86::RCX, 4);
+                $this->asm->add(X86::RAX, X86::RCX);
+                $this->asm->load32(X86::RAX, X86::RAX, 0);
+            } else {
+                $this->asm->add(X86::RAX, X86::RCX);
+                $this->asm->load(X86::RAX, X86::RAX, 0);
+            }
             return;
         }
 

@@ -349,6 +349,9 @@ class Monomorphizer {
             $this->scanExpr($expr->operand);
         } elseif ($expr instanceof FieldAccessNode) {
             $this->scanExpr($expr->object);
+        } elseif ($expr instanceof IndexNode) {
+            $this->scanExpr($expr->object);
+            $this->scanExpr($expr->index);
         } elseif ($expr instanceof IfNode) {
             $this->scanStmt($expr);
         } elseif ($expr instanceof MatchNode) {
@@ -849,6 +852,9 @@ class Monomorphizer {
         }
         if ($expr instanceof FieldAccessNode) {
             return new FieldAccessNode($this->rewriteExpr($expr->object), $expr->field_name, $expr->line);
+        }
+        if ($expr instanceof IndexNode) {
+            return new IndexNode($this->rewriteExpr($expr->object), $this->rewriteExpr($expr->index), $expr->line);
         }
         if ($expr instanceof IfNode) {
             return $this->rewriteStmt($expr);

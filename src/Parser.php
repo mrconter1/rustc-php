@@ -637,7 +637,7 @@ class Parser {
                 $mutable = true;
                 $this->pos++;
             }
-            $operand = $this->parsePrimary();
+            $operand = $this->parseUnary();
             return new BorrowNode($operand, $mutable, $line);
         }
         return $this->parsePrimary();
@@ -659,6 +659,19 @@ class Parser {
         if ($token->type === Token::FALSE) {
             $this->pos++;
             return new BoolLitNode(false, $token->line);
+        }
+
+        if ($token->type === Token::STR_LIT) {
+            $this->pos++;
+            $expr = new StrSliceNode($token->value, $token->line);
+            while ($this->check(Token::LBRACKET)) {
+                $idx_line = $this->current()->line;
+                $this->pos++;
+                $idx = $this->parseExpr();
+                $this->expect(Token::RBRACKET);
+                $expr = new IndexNode($expr, $idx, $idx_line);
+            }
+            return $expr;
         }
 
         if ($token->type === Token::MATCH) {
@@ -740,6 +753,14 @@ class Parser {
                 }
             }
 
+            while ($this->check(Token::LBRACKET)) {
+                $idx_line = $this->current()->line;
+                $this->pos++;
+                $idx = $this->parseExpr();
+                $this->expect(Token::RBRACKET);
+                $expr = new IndexNode($expr, $idx, $idx_line);
+            }
+
             return $expr;
         }
 
@@ -751,6 +772,13 @@ class Parser {
             $this->pos++;
             $expr = $this->parseExpr();
             $this->expect(Token::RPAREN);
+            while ($this->check(Token::LBRACKET)) {
+                $idx_line = $this->current()->line;
+                $this->pos++;
+                $idx = $this->parseExpr();
+                $this->expect(Token::RBRACKET);
+                $expr = new IndexNode($expr, $idx, $idx_line);
+            }
             return $expr;
         }
 
@@ -795,6 +823,16 @@ class Parser {
                 $ref = '&mut ';
                 $this->pos++;
             }
+        }
+        if ($this->check(Token::IDENT) && $this->current()->value === 'str') {
+            $this->pos++;
+            return $ref . 'str';
+        }
+        if ($this->check(Token::LBRACKET)) {
+            $this->pos++;
+            $inner = $this->parseType();
+            $this->expect(Token::RBRACKET);
+            return $ref . "[$inner]";
         }
         $name = $this->expect(Token::IDENT)->value;
         if ($this->check(Token::LT)) {
