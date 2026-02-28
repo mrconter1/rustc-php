@@ -47,7 +47,7 @@ $source = ltrim($source, "\xEF\xBB\xBF");
 try {
     $tokens  = (new Lexer($source))->tokenize();
     $ast     = (new Parser($tokens))->parse();
-    $code    = (new CodeGen())->generate($ast);
+    $code    = (new CodeGen())->generate($ast, Elf::LOAD_ADDR + Elf::CODE_OFFSET);
     (new Elf($code))->write($output);
     echo "Compiled $input -> $output\n";
 } catch (RuntimeException $e) {

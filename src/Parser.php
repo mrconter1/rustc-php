@@ -47,9 +47,67 @@ class Parser {
         if ($this->check(Token::IF)) {
             return $this->parseIf();
         }
+        if ($this->check(Token::MACRO)) {
+            return $this->parseMacroCall();
+        }
         $expr = $this->parseExpr();
         $this->expect(Token::SEMICOLON);
         return new ExprStmtNode($expr, $expr->line);
+    }
+
+    private function parseMacroCall(): mixed {
+        $token = $this->expect(Token::MACRO);
+        if ($token->value !== 'println') {
+            throw new RuntimeException("Unknown macro '{$token->value}!' on line {$token->line}");
+        }
+        return $this->parsePrintln($token->line);
+    }
+
+    private function parsePrintln(int $line): PrintlnNode {
+        $this->expect(Token::LPAREN);
+
+        if ($this->check(Token::RPAREN)) {
+            $this->expect(Token::RPAREN);
+            $this->expect(Token::SEMICOLON);
+            return new PrintlnNode(["\n"], $line);
+        }
+
+        $format = $this->expect(Token::STR_LIT)->value;
+
+        $args = [];
+        while ($this->check(Token::COMMA)) {
+            $this->pos++;
+            $args[] = $this->parseExpr();
+        }
+
+        $this->expect(Token::RPAREN);
+        $this->expect(Token::SEMICOLON);
+
+        $format_parts = explode('{}', $format);
+        $expected_args = count($format_parts) - 1;
+        if (count($args) !== $expected_args) {
+            throw new RuntimeException(
+                "println! expected $expected_args arguments, got " . count($args) . " on line $line"
+            );
+        }
+
+        $parts = [];
+        for ($i = 0; $i < count($format_parts); $i++) {
+            if ($format_parts[$i] !== '') {
+                $parts[] = $format_parts[$i];
+            }
+            if ($i < $expected_args) {
+                $parts[] = $args[$i];
+            }
+        }
+
+        if (count($parts) > 0 && is_string($parts[count($parts) - 1])) {
+            $parts[count($parts) - 1] .= "\n";
+        } else {
+            $parts[] = "\n";
+        }
+
+        return new PrintlnNode($parts, $line);
     }
 
     private function parseLet(): LetNode {

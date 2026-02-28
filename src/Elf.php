@@ -1,9 +1,10 @@
 <?php
 
 class Elf {
-    private const LOAD_ADDR   = 0x400000;
-    private const HEADER_SIZE = 64; // ELF header
-    private const PHDR_SIZE   = 56; // One program header entry
+    public const LOAD_ADDR   = 0x400000;
+    public const HEADER_SIZE = 64;
+    public const PHDR_SIZE   = 56;
+    public const CODE_OFFSET = 120; // HEADER_SIZE + PHDR_SIZE
 
     private string $code;
 

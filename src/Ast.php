@@ -103,3 +103,21 @@ class CallNode {
         $this->line = $line;
     }
 }
+
+class StrLitNode {
+    public string $value;
+    public int    $line;
+    public function __construct(string $value, int $line) {
+        $this->value = $value;
+        $this->line  = $line;
+    }
+}
+
+class PrintlnNode {
+    public array $parts; // mixed: string literals (string) and expression nodes
+    public int   $line;
+    public function __construct(array $parts, int $line) {
+        $this->parts = $parts;
+        $this->line  = $line;
+    }
+}
