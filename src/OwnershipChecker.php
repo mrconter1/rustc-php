@@ -92,6 +92,14 @@ class OwnershipChecker {
             return;
         }
 
+        if ($stmt instanceof WhileNode) {
+            $this->checkExpr($stmt->condition);
+            $saved = $this->vars;
+            $this->checkBody($stmt->body);
+            $this->vars = $this->mergeStates($saved, $this->vars);
+            return;
+        }
+
         if ($stmt instanceof IfNode) {
             $this->checkExpr($stmt->condition);
 

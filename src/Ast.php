@@ -57,6 +57,17 @@ class IfNode {
     }
 }
 
+class WhileNode {
+    public mixed $condition;
+    public array $body;
+    public int   $line;
+    public function __construct(mixed $condition, array $body, int $line) {
+        $this->condition = $condition;
+        $this->body      = $body;
+        $this->line      = $line;
+    }
+}
+
 class ExprStmtNode {
     public mixed $expr;
     public int   $line;

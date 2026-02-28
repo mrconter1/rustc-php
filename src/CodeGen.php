@@ -92,6 +92,9 @@ class CodeGen {
                     $this->collectVars($stmt->else_body);
                 }
             }
+            if ($stmt instanceof WhileNode) {
+                $this->collectVars($stmt->body);
+            }
         }
     }
 
@@ -124,6 +127,11 @@ class CodeGen {
 
         if ($stmt instanceof IfNode) {
             $this->generateIf($stmt);
+            return;
+        }
+
+        if ($stmt instanceof WhileNode) {
+            $this->generateWhile($stmt);
             return;
         }
 
@@ -224,6 +232,16 @@ class CodeGen {
             $this->generateBody($node->else_body);
             $this->asm->patch32($jmp_patch, $this->asm->pos() - $jmp_patch - 4);
         }
+    }
+
+    private function generateWhile(WhileNode $node): void {
+        $loop_top = $this->asm->pos();
+        $this->generateExpr($node->condition);
+        $this->asm->test(X86::RAX, X86::RAX);
+        $jz_patch = $this->asm->jz_rel32();
+        $this->generateBody($node->body);
+        $this->asm->jmp_to($loop_top);
+        $this->asm->patch32($jz_patch, $this->asm->pos() - $jz_patch - 4);
     }
 
     private function generateExpr(mixed $expr): void {

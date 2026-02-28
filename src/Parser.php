@@ -47,6 +47,9 @@ class Parser {
         if ($this->check(Token::IF)) {
             return $this->parseIf();
         }
+        if ($this->check(Token::WHILE)) {
+            return $this->parseWhile();
+        }
         if ($this->check(Token::MACRO)) {
             return $this->parseMacroCall();
         }
@@ -159,6 +162,13 @@ class Parser {
         }
 
         return new IfNode($condition, $then_body, $else_body, $line);
+    }
+
+    private function parseWhile(): WhileNode {
+        $line = $this->expect(Token::WHILE)->line;
+        $condition = $this->parseExpr();
+        $body = $this->parseBlock();
+        return new WhileNode($condition, $body, $line);
     }
 
     // --- expression parsing with precedence ---

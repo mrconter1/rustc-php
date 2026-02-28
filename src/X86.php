@@ -199,6 +199,13 @@ class X86 {
         return $pos;
     }
 
+    // jmp to an absolute buffer position (rel32)
+    public function jmp_to(int $target): void {
+        $this->emit("\xE9");
+        $offset = $target - ($this->pos() + 4);
+        $this->emit(pack('V', $offset & 0xFFFFFFFF));
+    }
+
     // jnz to an absolute position (short jump, rel8)
     public function jnz_to(int $target): void {
         $offset = $target - $this->pos() - 2;
