@@ -2,14 +2,19 @@
 
 require_once __DIR__ . '/Parser.php';
 require_once __DIR__ . '/Elf.php';
+require_once __DIR__ . '/X86.php';
 
 class CodeGen {
-    private string $code = '';
+    private X86    $asm;
     private string $data = '';
-    private array  $data_patches = [];
-    private array  $vars = []; // name => ['offset' => int, 'type' => string]
+    private array  $data_patches = []; // [asm_pos, data_offset]
+    private array  $vars = [];
     private int    $stack_size = 0;
     private int    $code_base_addr;
+
+    public function __construct() {
+        $this->asm = new X86();
+    }
 
     public function generate(ProgramNode $program, int $code_base_addr): string {
         $this->code_base_addr = $code_base_addr;
@@ -23,17 +28,13 @@ class CodeGen {
         }
 
         $this->patchDataAddresses();
-        return $this->code . $this->data;
+        return $this->asm->getBuffer() . $this->data;
     }
 
     private function patchDataAddresses(): void {
-        $data_base = $this->code_base_addr + strlen($this->code);
-        foreach ($this->data_patches as [$code_pos, $data_offset]) {
-            $addr = $data_base + $data_offset;
-            $packed = pack('P', $addr);
-            for ($i = 0; $i < 8; $i++) {
-                $this->code[$code_pos + $i] = $packed[$i];
-            }
+        $data_base = $this->code_base_addr + $this->asm->pos();
+        foreach ($this->data_patches as [$asm_pos, $data_offset]) {
+            $this->asm->patch64($asm_pos, $data_base + $data_offset);
         }
     }
 
@@ -57,17 +58,17 @@ class CodeGen {
     private function generateMain(FunctionNode $fn): void {
         $this->vars       = [];
         $this->stack_size = 0;
-        $this->code       = '';
         $this->data       = '';
         $this->data_patches = [];
+        $this->asm->reset();
 
         $this->collectVars($fn->body);
 
         if ($this->stack_size > 0) {
-            $this->emit("\x55");                                     // push rbp
-            $this->emit("\x48\x89\xE5");                             // mov rbp, rsp
+            $this->asm->push(X86::RBP);
+            $this->asm->mov(X86::RBP, X86::RSP);
             $aligned = ($this->stack_size + 15) & ~15;
-            $this->emit("\x48\x83\xEC" . pack('C', $aligned));       // sub rsp, N
+            $this->asm->sub_imm8(X86::RSP, $aligned);
         }
 
         $this->generateBody($fn->body);
@@ -104,11 +105,9 @@ class CodeGen {
         if ($stmt instanceof LetNode) {
             $this->generateExpr($stmt->value);
             $var = $this->vars[$stmt->name];
-            // mov [rbp-offset], rax (pointer or i32 value)
-            $this->emit("\x48\x89\x45" . pack('c', -$var['offset']));
+            $this->asm->store(X86::RBP, -$var['offset'], X86::RAX);
             if ($var['type'] === 'String') {
-                // mov [rbp-(offset-8)], rdx (string length)
-                $this->emit("\x48\x89\x55" . pack('c', -($var['offset'] - 8)));
+                $this->asm->store(X86::RBP, -($var['offset'] - 8), X86::RDX);
             }
             return;
         }
@@ -129,9 +128,9 @@ class CodeGen {
                     throw new RuntimeException("exit() takes exactly 1 argument on line {$stmt->line}");
                 }
                 $this->generateExpr($stmt->expr->args[0]);
-                $this->emit("\x48\x89\xC7");                         // mov rdi, rax
-                $this->emit("\x48\xC7\xC0\x3C\x00\x00\x00");        // mov rax, 60
-                $this->emit("\x0F\x05");                             // syscall
+                $this->asm->mov(X86::RDI, X86::RAX);
+                $this->asm->mov_imm32(X86::RAX, 60);
+                $this->asm->syscall();
                 return;
             }
             $this->generateExpr($stmt->expr);
@@ -159,97 +158,80 @@ class CodeGen {
 
     private function emitWriteString(string $str): void {
         $data_offset = $this->addData($str);
-        $len = strlen($str);
 
-        $this->emit("\x48\xC7\xC0\x01\x00\x00\x00");        // mov rax, 1 (write)
-        $this->emit("\x48\xC7\xC7\x01\x00\x00\x00");        // mov rdi, 1 (stdout)
-        $this->emit("\x48\xBE");                              // movabs rsi, <addr>
-        $this->data_patches[] = [strlen($this->code), $data_offset];
-        $this->emit("\x00\x00\x00\x00\x00\x00\x00\x00");
-        $this->emit("\x48\xC7\xC2" . pack('V', $len));      // mov rdx, len
-        $this->emit("\x0F\x05");                              // syscall
+        $this->asm->mov_imm32(X86::RAX, 1);
+        $this->asm->mov_imm32(X86::RDI, 1);
+        $patch_pos = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$patch_pos, $data_offset];
+        $this->asm->mov_imm32(X86::RDX, strlen($str));
+        $this->asm->syscall();
     }
 
     private function emitPrintString(): void {
-        // rax = string pointer, rdx = string length
-        $this->emit("\x48\x89\xC6");                          // mov rsi, rax
-        $this->emit("\x48\xC7\xC0\x01\x00\x00\x00");         // mov rax, 1 (write)
-        $this->emit("\x48\xC7\xC7\x01\x00\x00\x00");         // mov rdi, 1 (stdout)
-        $this->emit("\x0F\x05");                              // syscall
+        $this->asm->mov(X86::RSI, X86::RAX);
+        $this->asm->mov_imm32(X86::RAX, 1);
+        $this->asm->mov_imm32(X86::RDI, 1);
+        $this->asm->syscall();
     }
 
     private function emitPrintInt(): void {
-        $this->emit("\x48\x83\xEC\x20");                     // sub rsp, 32
-        $this->emit("\x4C\x8D\x44\x24\x1F");                 // lea r8, [rsp+31]
-        $this->emit("\x4D\x31\xC9");                          // xor r9, r9
-        $this->emit("\x48\xC7\xC1\x0A\x00\x00\x00");         // mov rcx, 10
+        $this->asm->sub_imm8(X86::RSP, 32);
+        $this->asm->lea_rsp(X86::R8, 31);
+        $this->asm->xor_(X86::R9, X86::R9);
+        $this->asm->mov_imm32(X86::RCX, 10);
 
-        $this->emit("\x49\xFF\xC8");                          // dec r8
-        $this->emit("\x48\x31\xD2");                          // xor rdx, rdx
-        $this->emit("\x48\xF7\xF1");                          // div rcx
-        $this->emit("\x80\xC2\x30");                          // add dl, '0'
-        $this->emit("\x41\x88\x10");                          // mov [r8], dl
-        $this->emit("\x49\xFF\xC1");                          // inc r9
-        $this->emit("\x48\x85\xC0");                          // test rax, rax
-        $this->emit("\x75\xE9");                              // jnz loop (-23)
+        $loop_start = $this->asm->pos();
+        $this->asm->dec(X86::R8);
+        $this->asm->xor_(X86::RDX, X86::RDX);
+        $this->asm->div(X86::RCX);
+        $this->asm->add_r8_imm8(X86::DL, 0x30);
+        $this->asm->store_byte_reg(X86::R8, X86::DL);
+        $this->asm->inc(X86::R9);
+        $this->asm->test(X86::RAX, X86::RAX);
+        $this->asm->jnz_to($loop_start);
 
-        $this->emit("\x4C\x89\xC6");                          // mov rsi, r8
-        $this->emit("\x4C\x89\xCA");                          // mov rdx, r9
-        $this->emit("\x48\xC7\xC0\x01\x00\x00\x00");         // mov rax, 1 (write)
-        $this->emit("\x48\xC7\xC7\x01\x00\x00\x00");         // mov rdi, 1 (stdout)
-        $this->emit("\x0F\x05");                              // syscall
-        $this->emit("\x48\x83\xC4\x20");                      // add rsp, 32
+        $this->asm->mov(X86::RSI, X86::R8);
+        $this->asm->mov(X86::RDX, X86::R9);
+        $this->asm->mov_imm32(X86::RAX, 1);
+        $this->asm->mov_imm32(X86::RDI, 1);
+        $this->asm->syscall();
+        $this->asm->add_imm8(X86::RSP, 32);
     }
 
     private function generateIf(IfNode $node): void {
         $this->generateExpr($node->condition);
-        $this->emit("\x48\x85\xC0");                          // test rax, rax
+        $this->asm->test(X86::RAX, X86::RAX);
 
         if ($node->else_body === null) {
-            $this->emit("\x0F\x84");
-            $jz_patch = strlen($this->code);
-            $this->emit("\x00\x00\x00\x00");
-
+            $jz_patch = $this->asm->jz_rel32();
             $this->generateBody($node->then_body);
-            $this->patch32($jz_patch, strlen($this->code) - $jz_patch - 4);
+            $this->asm->patch32($jz_patch, $this->asm->pos() - $jz_patch - 4);
         } else {
-            $this->emit("\x0F\x84");
-            $jz_patch = strlen($this->code);
-            $this->emit("\x00\x00\x00\x00");
-
+            $jz_patch = $this->asm->jz_rel32();
             $this->generateBody($node->then_body);
-
-            $this->emit("\xE9");
-            $jmp_patch = strlen($this->code);
-            $this->emit("\x00\x00\x00\x00");
-
-            $this->patch32($jz_patch, strlen($this->code) - $jz_patch - 4);
+            $jmp_patch = $this->asm->jmp_rel32();
+            $this->asm->patch32($jz_patch, $this->asm->pos() - $jz_patch - 4);
             $this->generateBody($node->else_body);
-            $this->patch32($jmp_patch, strlen($this->code) - $jmp_patch - 4);
+            $this->asm->patch32($jmp_patch, $this->asm->pos() - $jmp_patch - 4);
         }
     }
 
     private function generateExpr(mixed $expr): void {
         if ($expr instanceof IntLitNode) {
-            $this->emit("\x48\xC7\xC0" . pack('V', $expr->value));
+            $this->asm->mov_imm32(X86::RAX, $expr->value);
             return;
         }
 
         if ($expr instanceof BoolLitNode) {
-            $val = $expr->value ? 1 : 0;
-            $this->emit("\x48\xC7\xC0" . pack('V', $val));
+            $this->asm->mov_imm32(X86::RAX, $expr->value ? 1 : 0);
             return;
         }
 
         if ($expr instanceof StringFromNode) {
             $data_offset = $this->addData($expr->value);
-            $len = strlen($expr->value);
-            // movabs rax, <data address placeholder>
-            $this->emit("\x48\xB8");
-            $this->data_patches[] = [strlen($this->code), $data_offset];
-            $this->emit("\x00\x00\x00\x00\x00\x00\x00\x00");
-            // mov rdx, len
-            $this->emit("\x48\xC7\xC2" . pack('V', $len));
+            $patch_pos = $this->asm->mov_imm64(X86::RAX);
+            $this->data_patches[] = [$patch_pos, $data_offset];
+            $this->asm->mov_imm32(X86::RDX, strlen($expr->value));
             return;
         }
 
@@ -258,54 +240,34 @@ class CodeGen {
                 throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
             }
             $var = $this->vars[$expr->name];
-            // mov rax, [rbp-offset]
-            $this->emit("\x48\x8B\x45" . pack('c', -$var['offset']));
+            $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
             if ($var['type'] === 'String') {
-                // mov rdx, [rbp-(offset-8)]
-                $this->emit("\x48\x8B\x55" . pack('c', -($var['offset'] - 8)));
+                $this->asm->load(X86::RDX, X86::RBP, -($var['offset'] - 8));
             }
             return;
         }
 
         if ($expr instanceof BinaryOpNode) {
             $this->generateExpr($expr->left);
-            $this->emit("\x50");                               // push rax
+            $this->asm->push(X86::RAX);
             $this->generateExpr($expr->right);
-            $this->emit("\x48\x89\xC1");                       // mov rcx, rax
-            $this->emit("\x58");                               // pop rax
+            $this->asm->mov(X86::RCX, X86::RAX);
+            $this->asm->pop(X86::RAX);
 
             switch ($expr->op) {
-                case '+':
-                    $this->emit("\x48\x01\xC8");
-                    break;
-                case '-':
-                    $this->emit("\x48\x29\xC8");
-                    break;
-                case '*':
-                    $this->emit("\x48\x0F\xAF\xC1");
-                    break;
+                case '+':  $this->asm->add(X86::RAX, X86::RCX); break;
+                case '-':  $this->asm->sub(X86::RAX, X86::RCX); break;
+                case '*':  $this->asm->imul(X86::RAX, X86::RCX); break;
                 case '/':
-                    $this->emit("\x48\x99");
-                    $this->emit("\x48\xF7\xF9");
+                    $this->asm->cqo();
+                    $this->asm->idiv(X86::RCX);
                     break;
-                case '==':
-                    $this->emitComparison("\x0F\x94");
-                    break;
-                case '!=':
-                    $this->emitComparison("\x0F\x95");
-                    break;
-                case '<':
-                    $this->emitComparison("\x0F\x9C");
-                    break;
-                case '>':
-                    $this->emitComparison("\x0F\x9F");
-                    break;
-                case '<=':
-                    $this->emitComparison("\x0F\x9E");
-                    break;
-                case '>=':
-                    $this->emitComparison("\x0F\x9D");
-                    break;
+                case '==': $this->emitCmp(X86::CC_E); break;
+                case '!=': $this->emitCmp(X86::CC_NE); break;
+                case '<':  $this->emitCmp(X86::CC_L); break;
+                case '>':  $this->emitCmp(X86::CC_G); break;
+                case '<=': $this->emitCmp(X86::CC_LE); break;
+                case '>=': $this->emitCmp(X86::CC_GE); break;
                 default:
                     throw new RuntimeException("Unknown operator '{$expr->op}' on line {$expr->line}");
             }
@@ -319,30 +281,19 @@ class CodeGen {
         throw new RuntimeException("Unknown expression type: " . get_class($expr));
     }
 
-    private function emitComparison(string $setcc_opcode): void {
-        $this->emit("\x48\x39\xC8");
-        $this->emit($setcc_opcode . "\xC0");
-        $this->emit("\x48\x0F\xB6\xC0");
+    private function emitCmp(int $cc): void {
+        $this->asm->cmp(X86::RAX, X86::RCX);
+        $this->asm->setcc($cc);
+        $this->asm->movzx_rax_al();
     }
 
     private function emitExit(int $code): void {
-        $this->emit("\x48\xC7\xC0\x3C\x00\x00\x00");
+        $this->asm->mov_imm32(X86::RAX, 60);
         if ($code === 0) {
-            $this->emit("\x48\x31\xFF");
+            $this->asm->xor_(X86::RDI, X86::RDI);
         } else {
-            $this->emit("\x48\xC7\xC7" . pack('V', $code));
+            $this->asm->mov_imm32(X86::RDI, $code);
         }
-        $this->emit("\x0F\x05");
-    }
-
-    private function emit(string $bytes): void {
-        $this->code .= $bytes;
-    }
-
-    private function patch32(int $offset, int $value): void {
-        $packed = pack('V', $value);
-        for ($i = 0; $i < 4; $i++) {
-            $this->code[$offset + $i] = $packed[$i];
-        }
+        $this->asm->syscall();
     }
 }
