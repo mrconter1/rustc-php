@@ -16,8 +16,24 @@ This compiler outputs valid machine code for Linux, so the most practical approa
 wsl --install
 ```
 
-After the install completes, reboot your machine and then open Ubuntu from the Start menu to finish the initial setup. Once that's done, you can run compiled binaries directly from WSL:
+After the install completes, reboot your machine and then open Ubuntu from the Start menu to finish the initial setup.
+
+## Usage
+
+Compile a `.rs` file by running:
 
 ```
-wsl ./your_program
+php rustc.php main.rs -o main
+```
+
+Then execute the compiled binary through WSL:
+
+```
+wsl ./main
+```
+
+To see the exit code of the program:
+
+```
+wsl ./main; echo $?
 ```
