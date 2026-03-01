@@ -3,6 +3,8 @@
 require_once __DIR__ . '/Ast.php';
 
 class OwnershipChecker {
+    private const INT_PRIMITIVES = ['i32', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize'];
+
     private array $vars = [];
     private array $func_sigs = [];
     private array $struct_defs = [];
@@ -10,20 +12,43 @@ class OwnershipChecker {
     private ?string $current_return_type = null;
     private ?string $current_module = null;
 
+    private function typeSize(string $type): int {
+        if ($type === 'u128') return 16;
+        if (in_array($type, self::INT_PRIMITIVES, true) || $type === 'bool') return 8;
+        if (isset($this->struct_defs[$type])) return $this->struct_defs[$type]['size'];
+        if (isset($this->enum_defs[$type])) return $this->enum_defs[$type]['size'];
+        return 8;
+    }
+
+    private function integerTypesCompatible(string $expected, string $actual): bool {
+        return in_array($expected, self::INT_PRIMITIVES, true) && in_array($actual, self::INT_PRIMITIVES, true);
+    }
+
     public function check(ProgramNode $program): void {
         foreach ($program->structs as $sd) {
-            $size = 0;
-            $field_offsets = [];
-            foreach ($sd->fields as $f) {
-                $field_offsets[$f['name']] = $size;
-                $size += 8;
-            }
             $this->struct_defs[$sd->name] = [
                 'fields' => $sd->fields,
-                'size' => $size,
-                'field_offsets' => $field_offsets,
+                'size' => 0,
+                'field_offsets' => [],
                 'module' => $sd->module,
             ];
+        }
+        $changed = true;
+        while ($changed) {
+            $changed = false;
+            foreach ($program->structs as $sd) {
+                $size = 0;
+                $field_offsets = [];
+                foreach ($sd->fields as $f) {
+                    $field_offsets[$f['name']] = $size;
+                    $size += $this->typeSize($f['type']);
+                }
+                if ($size !== $this->struct_defs[$sd->name]['size']) {
+                    $changed = true;
+                    $this->struct_defs[$sd->name]['size'] = $size;
+                    $this->struct_defs[$sd->name]['field_offsets'] = $field_offsets;
+                }
+            }
         }
 
         foreach ($program->enums as $ed) {
@@ -110,7 +135,7 @@ class OwnershipChecker {
             $expr_type = $this->exprType($stmt->value);
             $type = $stmt->type_name ?? $expr_type;
 
-            if ($stmt->type_name !== null && $stmt->type_name !== $expr_type) {
+            if ($stmt->type_name !== null && $stmt->type_name !== $expr_type && !$this->integerTypesCompatible($stmt->type_name, $expr_type)) {
                 throw new RuntimeException(
                     "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' on line {$stmt->line}"
                 );
@@ -149,7 +174,7 @@ class OwnershipChecker {
             $this->checkExpr($stmt->value);
 
             $expr_type = $this->exprType($stmt->value);
-            if ($var['type'] !== $expr_type) {
+            if ($var['type'] !== $expr_type && !$this->integerTypesCompatible($var['type'], $expr_type)) {
                 throw new RuntimeException(
                     "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}' on line {$stmt->line}"
                 );
@@ -201,7 +226,7 @@ class OwnershipChecker {
                     foreach ($sd['fields'] as $f) {
                         if ($f['name'] === $stmt->field_name) {
                             $val_type = $this->exprType($stmt->value);
-                            if ($val_type !== $f['type']) {
+                            if ($val_type !== $f['type'] && !$this->integerTypesCompatible($f['type'], $val_type)) {
                                 throw new RuntimeException(
                                     "Type mismatch: cannot assign '$val_type' to field '{$stmt->field_name}' of type '{$f['type']}' on line {$stmt->line}"
                                 );
@@ -238,7 +263,7 @@ class OwnershipChecker {
 
                 if ($this->current_return_type !== null) {
                     $expr_type = $this->exprType($stmt->value);
-                    if ($expr_type !== $this->current_return_type) {
+                    if ($expr_type !== $this->current_return_type && !$this->integerTypesCompatible($this->current_return_type, $expr_type)) {
                         throw new RuntimeException(
                             "Type mismatch: expected return type '{$this->current_return_type}', got '$expr_type' on line {$stmt->line}"
                         );
@@ -463,7 +488,7 @@ class OwnershipChecker {
                 foreach ($expr->args as $i => $arg) {
                     $arg_type = $this->exprType($arg);
                     $param_type = $sig['params'][$i]['type'];
-                    if ($arg_type !== $param_type) {
+                    if ($arg_type !== $param_type && !$this->integerTypesCompatible($param_type, $arg_type)) {
                         throw new RuntimeException(
                             "Type mismatch: argument " . ($i + 1) . " of '{$expr->name}' expects '$param_type', got '$arg_type' on line {$expr->line}"
                         );
@@ -511,7 +536,7 @@ class OwnershipChecker {
             foreach ($expr->args as $i => $arg) {
                 $arg_type = $this->exprType($arg);
                 $param_type = str_replace('self', $base_type, $sig['params'][$i + 1]['type']);
-                if ($arg_type !== $param_type) {
+                if ($arg_type !== $param_type && !$this->integerTypesCompatible($param_type, $arg_type)) {
                     throw new RuntimeException("Type mismatch: argument " . ($i + 1) . " of '{$expr->method_name}' expects '$param_type', got '$arg_type' on line {$expr->line}");
                 }
             }
@@ -543,7 +568,7 @@ class OwnershipChecker {
     private function isCopy(string $type): bool {
         if (str_starts_with($type, '&mut ')) return false;
         if (str_starts_with($type, '&')) return true;
-        if (in_array($type, ['i32', 'bool'])) return true;
+        if (in_array($type, ['i32', 'bool'], true) || in_array($type, self::INT_PRIMITIVES, true)) return true;
         if (isset($this->enum_defs[$type])) return true;
         if (isset($this->struct_defs[$type])) {
             foreach ($this->struct_defs[$type]['fields'] as $f) {

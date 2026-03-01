@@ -25,6 +25,8 @@ class CodeGen {
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
+    private const INT_PRIMITIVES = ['i32', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize'];
+
     public function __construct() {
         $this->asm = new X86();
     }
@@ -40,17 +42,28 @@ class CodeGen {
         $this->struct_defs = [];
 
         foreach ($program->structs as $sd) {
-            $size = 0;
-            $field_offsets = [];
-            foreach ($sd->fields as $f) {
-                $field_offsets[$f['name']] = $size;
-                $size += 8;
-            }
             $this->struct_defs[$sd->name] = [
                 'fields' => $sd->fields,
-                'size' => $size,
-                'field_offsets' => $field_offsets,
+                'size' => 0,
+                'field_offsets' => [],
             ];
+        }
+        $changed = true;
+        while ($changed) {
+            $changed = false;
+            foreach ($program->structs as $sd) {
+                $size = 0;
+                $field_offsets = [];
+                foreach ($sd->fields as $f) {
+                    $field_offsets[$f['name']] = $size;
+                    $size += $this->typeSize($f['type']);
+                }
+                if ($size !== $this->struct_defs[$sd->name]['size']) {
+                    $changed = true;
+                    $this->struct_defs[$sd->name]['size'] = $size;
+                    $this->struct_defs[$sd->name]['field_offsets'] = $field_offsets;
+                }
+            }
         }
 
         foreach ($program->enums as $ed) {
@@ -138,9 +151,18 @@ class CodeGen {
         return $offset;
     }
 
+    private function typeSize(string $type): int {
+        if ($type === 'u128') return 16;
+        if (in_array($type, self::INT_PRIMITIVES, true) || $type === 'bool') return 8;
+        if (isset($this->struct_defs[$type])) return $this->struct_defs[$type]['size'];
+        if (isset($this->enum_defs[$type])) return $this->enum_defs[$type]['size'];
+        return 8;
+    }
+
     private function isFatType(string $type): bool {
         if ($type === 'String') return true;
         if ($type === 'str' || $type === '&str' || $type === '&mut str') return true;
+        if ($type === 'u128') return true;
         if (preg_match('/^&(mut )?\[.+\]$/', $type)) return true;
         if (isset($this->enum_defs[$type]) && $this->enum_defs[$type]['has_payload']) return true;
         if (isset($this->struct_defs[$type]) && $this->struct_defs[$type]['size'] > 8) return true;
@@ -296,14 +318,7 @@ class CodeGen {
         foreach ($stmts as $stmt) {
             if ($stmt instanceof LetNode) {
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
-                $size = 8;
-                if ($this->isFatType($type)) {
-                    $size = 16;
-                } elseif (isset($this->struct_defs[$type])) {
-                    $size = $this->struct_defs[$type]['size'];
-                } elseif (isset($this->enum_defs[$type])) {
-                    $size = $this->enum_defs[$type]['size'];
-                }
+                $size = $this->typeSize($type);
                 $this->stack_size += $size;
                 $slot = [
                     'offset' => $this->stack_size,
