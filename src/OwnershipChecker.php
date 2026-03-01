@@ -135,6 +135,10 @@ class OwnershipChecker {
             if ($stmt instanceof ReturnNode && $stmt->value !== null) $this->collectTypesFromExpr($stmt->value, $types);
             if ($stmt instanceof ExprStmtNode) $this->collectTypesFromExpr($stmt->expr, $types);
             if ($stmt instanceof AssignNode) $this->collectTypesFromExpr($stmt->value, $types);
+            if ($stmt instanceof CompoundAssignNode) {
+                $this->collectTypesFromExpr($stmt->target, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
             if ($stmt instanceof FieldAssignNode) {
                 $this->collectTypesFromExpr($stmt->object, $types);
                 $this->collectTypesFromExpr($stmt->value, $types);
@@ -260,6 +264,51 @@ class OwnershipChecker {
         }
     }
 
+    private function checkCompoundAssign(CompoundAssignNode $stmt): void {
+        $target = $stmt->target;
+        if ($target instanceof IdentNode) {
+            if (!isset($this->vars[$target->name])) {
+                throw new RuntimeException("Undefined variable '{$target->name}' on line {$stmt->line}");
+            }
+            $var = $this->vars[$target->name];
+            if (!$var['mutable']) {
+                throw new RuntimeException(
+                    "Cannot assign to immutable variable '{$target->name}' on line {$stmt->line}"
+                );
+            }
+        }
+        if ($target instanceof DerefNode && $target->operand instanceof IdentNode) {
+            $name = $target->operand->name;
+            if (!isset($this->vars[$name])) {
+                throw new RuntimeException("Undefined variable '$name' on line {$stmt->line}");
+            }
+            if (!str_starts_with($this->vars[$name]['type'], '&mut ')) {
+                throw new RuntimeException("Cannot assign through immutable reference '$name' on line {$stmt->line}");
+            }
+        }
+        if ($target instanceof FieldAccessNode && $target->object instanceof IdentNode) {
+            $name = $target->object->name;
+            if (!isset($this->vars[$name])) {
+                throw new RuntimeException("Undefined variable '$name' on line {$stmt->line}");
+            }
+            $var_type = $this->vars[$name]['type'];
+            $is_mut_ref = str_starts_with($var_type, '&mut ');
+            if (!$this->vars[$name]['mutable'] && !$is_mut_ref) {
+                throw new RuntimeException(
+                    "Cannot assign to field of immutable variable '$name' on line {$stmt->line}"
+                );
+            }
+        }
+        $this->checkExpr($stmt->value);
+        $lhs_type = $this->exprType($target);
+        $rhs_type = $this->exprType($stmt->value);
+        if ($lhs_type !== $rhs_type && !$this->integerTypesCompatible($lhs_type, $rhs_type)) {
+            throw new RuntimeException(
+                "Type mismatch: compound assignment requires compatible types, got '{$lhs_type}' and '{$rhs_type}' on line {$stmt->line}"
+            );
+        }
+    }
+
     private function checkBody(array $stmts): void {
         foreach ($stmts as $stmt) {
             $this->checkStmt($stmt);
@@ -295,6 +344,11 @@ class OwnershipChecker {
                 'moved_to' => null,
                 'moved_line' => null,
             ];
+            return;
+        }
+
+        if ($stmt instanceof CompoundAssignNode) {
+            $this->checkCompoundAssign($stmt);
             return;
         }
 
@@ -391,6 +445,39 @@ class OwnershipChecker {
                         "Cannot assign through immutable reference '$name' on line {$stmt->line}"
                     );
                 }
+            }
+            return;
+        }
+
+        if ($stmt instanceof AssignNode) {
+            if (!isset($this->vars[$stmt->name])) {
+                throw new RuntimeException("Undefined variable '{$stmt->name}' on line {$stmt->line}");
+            }
+            $var = $this->vars[$stmt->name];
+            if (!$var['mutable']) {
+                throw new RuntimeException(
+                    "Cannot assign twice to immutable variable '{$stmt->name}' on line {$stmt->line}"
+                );
+            }
+            $this->checkExpr($stmt->value);
+            $expr_type = $this->exprType($stmt->value);
+            if ($var['type'] !== $expr_type && !$this->integerTypesCompatible($var['type'], $expr_type)) {
+                throw new RuntimeException(
+                    "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}' on line {$stmt->line}"
+                );
+            }
+            if ($stmt->value instanceof IdentNode && !$this->isCopy($expr_type)) {
+                $src = $stmt->value->name;
+                if (isset($this->vars[$src])) {
+                    $this->vars[$src]['state'] = 'moved';
+                    $this->vars[$src]['moved_to'] = $stmt->name;
+                    $this->vars[$src]['moved_line'] = $stmt->line;
+                }
+            }
+            if ($var['state'] === 'moved') {
+                $this->vars[$stmt->name]['state'] = 'owned';
+                $this->vars[$stmt->name]['moved_to'] = null;
+                $this->vars[$stmt->name]['moved_line'] = null;
             }
             return;
         }

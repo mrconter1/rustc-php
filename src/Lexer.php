@@ -150,6 +150,10 @@ class Lexer {
         if ($ch === '|' && $next === '|') { $this->pos++; return new Token(Token::OR,     '||',  $line); }
 
         if ($ch === '|' && $next !== '|') { return new Token(Token::PIPE, '|', $line); }
+        if ($ch === '+' && $next === '=') { $this->pos++; return new Token(Token::PLUS_EQ,  '+=', $line); }
+        if ($ch === '-' && $next === '=') { $this->pos++; return new Token(Token::MINUS_EQ, '-=', $line); }
+        if ($ch === '*' && $next === '=') { $this->pos++; return new Token(Token::STAR_EQ,  '*=', $line); }
+        if ($ch === '/' && $next === '=') { $this->pos++; return new Token(Token::SLASH_EQ, '/=', $line); }
 
         return match($ch) {
             '(' => new Token(Token::LPAREN,    '(', $line),

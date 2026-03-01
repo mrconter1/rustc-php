@@ -157,6 +157,10 @@ class CodeGen {
             }
             if ($stmt instanceof ExprStmtNode) $this->collectTypesFromExpr($stmt->expr, $types);
             if ($stmt instanceof AssignNode) $this->collectTypesFromExpr($stmt->value, $types);
+            if ($stmt instanceof CompoundAssignNode) {
+                $this->collectTypesFromExpr($stmt->target, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
             if ($stmt instanceof FieldAssignNode) {
                 $this->collectTypesFromExpr($stmt->object, $types);
                 $this->collectTypesFromExpr($stmt->value, $types);
@@ -642,6 +646,11 @@ class CodeGen {
             return;
         }
 
+        if ($stmt instanceof CompoundAssignNode) {
+            $this->generateCompoundAssign($stmt);
+            return;
+        }
+
         if ($stmt instanceof ReturnNode) {
             if ($stmt->value !== null) {
                 $this->generateExpr($stmt->value);
@@ -700,6 +709,77 @@ class CodeGen {
         }
 
         throw new RuntimeException("Unknown statement type: " . get_class($stmt));
+    }
+
+    private function generateCompoundAssign(CompoundAssignNode $stmt): void {
+        $target = $stmt->target;
+        $op = $stmt->op;
+        if ($target instanceof IdentNode) {
+            $var = $this->vars[$target->name];
+            $this->asm->load(X86::RCX, X86::RBP, -$var['offset']);
+            $this->generateExpr($stmt->value);
+            $this->emitCompoundOp($op, $stmt->line);
+            $this->asm->store(X86::RBP, -$var['offset'], X86::RAX);
+            return;
+        }
+        if ($target instanceof DerefNode && $target->operand instanceof IdentNode) {
+            $var = $this->vars[$target->operand->name];
+            $this->asm->load(X86::R8, X86::RBP, -$var['offset']);
+            $this->asm->load(X86::RCX, X86::R8, 0);
+            $this->generateExpr($stmt->value);
+            $this->emitCompoundOp($op, $stmt->line);
+            $this->asm->store(X86::R8, 0, X86::RAX);
+            return;
+        }
+        if ($target instanceof FieldAccessNode && $target->object instanceof IdentNode) {
+            $var = $this->vars[$target->object->name];
+            $base_type = $var['type'];
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+            $sd = $this->struct_defs[$base_type];
+            $field_off = $sd['field_offsets'][$target->field_name];
+            if (str_starts_with($var['type'], '&')) {
+                $this->asm->load(X86::R8, X86::RBP, -$var['offset']);
+                $this->asm->load(X86::RCX, X86::R8, $field_off);
+            } else {
+                $this->asm->load(X86::RCX, X86::RBP, -($var['offset'] - $field_off));
+            }
+            $this->generateExpr($stmt->value);
+            $this->emitCompoundOp($op, $stmt->line);
+            if (str_starts_with($var['type'], '&')) {
+                $this->asm->store(X86::R8, $field_off, X86::RAX);
+            } else {
+                $this->asm->store(X86::RBP, -($var['offset'] - $field_off), X86::RAX);
+            }
+            return;
+        }
+        throw new RuntimeException("Compound assignment target not supported on line {$stmt->line}");
+    }
+
+    private function emitCompoundOp(string $op, int $line): void {
+        switch ($op) {
+            case '+':
+                $this->asm->add(X86::RAX, X86::RCX);
+                break;
+            case '-':
+                $this->asm->mov(X86::RBX, X86::RAX);
+                $this->asm->mov(X86::RAX, X86::RCX);
+                $this->asm->mov(X86::RCX, X86::RBX);
+                $this->asm->sub(X86::RAX, X86::RCX);
+                break;
+            case '*':
+                $this->asm->imul(X86::RAX, X86::RCX);
+                break;
+            case '/':
+                $this->asm->mov(X86::RBX, X86::RAX);
+                $this->asm->mov(X86::RAX, X86::RCX);
+                $this->asm->mov(X86::RCX, X86::RBX);
+                $this->asm->cqo();
+                $this->asm->idiv(X86::RCX);
+                break;
+            default:
+                throw new RuntimeException("Unknown compound operator '$op' on line $line");
+        }
     }
 
     private function generatePrintln(PrintlnNode $node): void {

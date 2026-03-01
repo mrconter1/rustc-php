@@ -257,6 +257,9 @@ class Monomorphizer {
             }
         } elseif ($stmt instanceof AssignNode) {
             $this->scanExpr($stmt->value);
+        } elseif ($stmt instanceof CompoundAssignNode) {
+            $this->scanExpr($stmt->target);
+            $this->scanExpr($stmt->value);
         } elseif ($stmt instanceof FieldAssignNode) {
             $this->scanExpr($stmt->value);
         } elseif ($stmt instanceof DerefAssignNode) {
@@ -565,6 +568,14 @@ class Monomorphizer {
         if ($stmt instanceof AssignNode) {
             return new AssignNode($stmt->name, $this->substituteExpr($stmt->value, $map), $stmt->line);
         }
+        if ($stmt instanceof CompoundAssignNode) {
+            return new CompoundAssignNode(
+                $this->substituteExpr($stmt->target, $map),
+                $stmt->op,
+                $this->substituteExpr($stmt->value, $map),
+                $stmt->line
+            );
+        }
         if ($stmt instanceof FieldAssignNode) {
             return new FieldAssignNode(
                 $this->substituteExpr($stmt->object, $map),
@@ -713,6 +724,14 @@ class Monomorphizer {
         }
         if ($stmt instanceof AssignNode) {
             return new AssignNode($stmt->name, $this->rewriteExpr($stmt->value), $stmt->line);
+        }
+        if ($stmt instanceof CompoundAssignNode) {
+            return new CompoundAssignNode(
+                $this->rewriteExpr($stmt->target),
+                $stmt->op,
+                $this->rewriteExpr($stmt->value),
+                $stmt->line
+            );
         }
         if ($stmt instanceof FieldAssignNode) {
             return new FieldAssignNode(

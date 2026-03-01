@@ -53,12 +53,16 @@ class Token {
     const ARROW     = 'ARROW';     // ->
 
     // Operators
-    const PLUS  = 'PLUS';  // +
-    const MINUS = 'MINUS'; // -
-    const STAR  = 'STAR';  // *
-    const SLASH   = 'SLASH';   // /
-    const PERCENT = 'PERCENT'; // %
-    const EQ    = 'EQ';    // =
+    const PLUS     = 'PLUS';     // +
+    const MINUS    = 'MINUS';    // -
+    const STAR     = 'STAR';     // *
+    const SLASH    = 'SLASH';    // /
+    const PERCENT  = 'PERCENT';  // %
+    const PLUS_EQ  = 'PLUS_EQ';  // +=
+    const MINUS_EQ = 'MINUS_EQ'; // -=
+    const STAR_EQ  = 'STAR_EQ';  // *=
+    const SLASH_EQ = 'SLASH_EQ'; // /=
+    const EQ       = 'EQ';      // =
     const EQEQ  = 'EQEQ';  // ==
     const NEQ   = 'NEQ';   // !=
     const LT    = 'LT';    // <

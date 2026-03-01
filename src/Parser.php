@@ -424,6 +424,19 @@ class Parser {
         }
         $expr = $this->parseExpr();
 
+        $compound_op = null;
+        if ($this->check(Token::PLUS_EQ))  { $compound_op = '+'; }
+        if ($this->check(Token::MINUS_EQ)) { $compound_op = '-'; }
+        if ($this->check(Token::STAR_EQ))  { $compound_op = '*'; }
+        if ($this->check(Token::SLASH_EQ)) { $compound_op = '/'; }
+        if ($compound_op !== null && ($expr instanceof IdentNode || $expr instanceof DerefNode || $expr instanceof FieldAccessNode)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $value = $this->parseExpr();
+            $this->expect(Token::SEMICOLON);
+            return new CompoundAssignNode($expr, $compound_op, $value, $line);
+        }
+
         if ($expr instanceof IdentNode && $this->check(Token::EQ)) {
             $line = $this->current()->line;
             $this->pos++;

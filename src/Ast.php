@@ -214,6 +214,19 @@ class AssignNode {
     }
 }
 
+class CompoundAssignNode {
+    public mixed  $target;
+    public string $op;
+    public mixed  $value;
+    public int    $line;
+    public function __construct(mixed $target, string $op, mixed $value, int $line) {
+        $this->target = $target;
+        $this->op     = $op;
+        $this->value  = $value;
+        $this->line   = $line;
+    }
+}
+
 class IfNode {
     public mixed  $condition;
     public array  $then_body;
