@@ -292,8 +292,33 @@ class CodeGen {
         return $offset;
     }
 
+    private function tupleElementTypes(string $type): ?array {
+        if (strlen($type) < 2 || $type[0] !== '(' || $type[strlen($type) - 1] !== ')') return null;
+        $inner = substr($type, 1, -1);
+        $depth = 0;
+        $start = 0;
+        $elements = [];
+        for ($i = 0; $i <= strlen($inner); $i++) {
+            $c = $i < strlen($inner) ? $inner[$i] : ',';
+            if ($c === '(') $depth++;
+            elseif ($c === ')') $depth--;
+            elseif (($c === ',' && $depth === 0) || $i === strlen($inner)) {
+                $seg = trim(substr($inner, $start, $i - $start));
+                if ($seg !== '') $elements[] = $seg;
+                $start = $i + 1;
+            }
+        }
+        return $elements;
+    }
+
     private function typeSize(string $type): int {
         if ($type === '()') return 0;
+        $elements = $this->tupleElementTypes($type);
+        if ($elements !== null) {
+            $n = 0;
+            foreach ($elements as $t) $n += $this->typeSize($t);
+            return $n;
+        }
         if ($type === 'u128') return 16;
         if (in_array($type, self::INT_PRIMITIVES, true) || $type === 'bool') return 8;
         if (isset($this->struct_defs[$type])) return $this->struct_defs[$type]['size'];
@@ -306,6 +331,7 @@ class CodeGen {
         if ($type === 'str' || $type === '&str' || $type === '&mut str') return true;
         if ($type === 'u128') return true;
         if (preg_match('/^&(mut )?\[.+\]$/', $type)) return true;
+        if ($this->tupleElementTypes($type) !== null) return $this->typeSize($type) > 8;
         if (isset($this->enum_defs[$type]) && $this->enum_defs[$type]['has_payload']) return true;
         if (isset($this->struct_defs[$type]) && $this->struct_defs[$type]['size'] > 8) return true;
         return false;
@@ -313,6 +339,17 @@ class CodeGen {
 
     private function exprType(mixed $expr): string {
         if ($expr instanceof UnitLitNode) return '()';
+        if ($expr instanceof TupleLitNode) {
+            $parts = [];
+            foreach ($expr->elements as $e) $parts[] = $this->exprType($e);
+            return '(' . implode(',', $parts) . ')';
+        }
+        if ($expr instanceof TupleIndexNode) {
+            $obj_type = $this->exprType($expr->object);
+            $elements = $this->tupleElementTypes($obj_type);
+            if ($elements !== null && isset($elements[$expr->index])) return $elements[$expr->index];
+            return 'i32';
+        }
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
@@ -462,14 +499,37 @@ class CodeGen {
             if ($stmt instanceof LetNode) {
                 $this->collectMatchSlotsFromExpr($stmt->value);
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
-                $size = $this->typeSize($type);
-                $this->stack_size += $size;
-                $slot = [
-                    'offset' => $this->stack_size,
-                    'type'   => $type,
-                ];
-                $this->let_slots[spl_object_id($stmt)] = $slot;
-                $this->vars[$stmt->name] = $slot;
+                if (!empty($stmt->bindings)) {
+                    if (count($stmt->bindings) > 2) {
+                        throw new RuntimeException("Only 2-element tuple destructuring supported on line {$stmt->line}");
+                    }
+                    $element_types = $this->tupleElementTypes($type);
+                    if ($element_types === null || count($element_types) !== count($stmt->bindings)) {
+                        throw new RuntimeException("Tuple destructuring type mismatch on line {$stmt->line}");
+                    }
+                    $base = $this->stack_size;
+                    $slots = [];
+                    $off = $base;
+                    foreach ($element_types as $et) {
+                        $sz = $this->typeSize($et);
+                        $slots[] = ['offset' => $off, 'type' => $et];
+                        $off += $sz;
+                    }
+                    $this->stack_size = $off;
+                    $this->let_slots[spl_object_id($stmt)] = $slots;
+                    foreach ($stmt->bindings as $i => $name) {
+                        $this->vars[$name] = $slots[$i];
+                    }
+                } else {
+                    $size = $this->typeSize($type);
+                    $this->stack_size += $size;
+                    $slot = [
+                        'offset' => $this->stack_size,
+                        'type'   => $type,
+                    ];
+                    $this->let_slots[spl_object_id($stmt)] = $slot;
+                    $this->vars[$stmt->name] = $slot;
+                }
             }
             if ($stmt instanceof IfNode) {
                 $this->collectVars($stmt->then_body);
@@ -538,6 +598,14 @@ class CodeGen {
             $this->collectMatchSlotsFromExpr($expr->operand);
             return;
         }
+        if ($expr instanceof TupleLitNode) {
+            foreach ($expr->elements as $e) $this->collectMatchSlotsFromExpr($e);
+            return;
+        }
+        if ($expr instanceof TupleIndexNode) {
+            $this->collectMatchSlotsFromExpr($expr->object);
+            return;
+        }
         if ($expr instanceof FieldAccessNode) $this->collectMatchSlotsFromExpr($expr->object);
         if ($expr instanceof IndexNode) {
             $this->collectMatchSlotsFromExpr($expr->object);
@@ -582,6 +650,19 @@ class CodeGen {
     private function generateStmt(mixed $stmt): void {
         if ($stmt instanceof LetNode) {
             $slot = $this->let_slots[spl_object_id($stmt)];
+
+            if (!empty($stmt->bindings)) {
+                $slots = $slot;
+                $this->generateExpr($stmt->value);
+                $this->asm->store(X86::RBP, -$slots[0]['offset'], X86::RAX);
+                if (count($slots) > 1) {
+                    $this->asm->store(X86::RBP, -$slots[1]['offset'], X86::RDX);
+                }
+                foreach ($stmt->bindings as $i => $name) {
+                    $this->vars[$name] = $slots[$i];
+                }
+                return;
+            }
 
             if ($stmt->value instanceof StructLitNode) {
                 $sd = $this->struct_defs[$stmt->value->struct_name];
@@ -949,6 +1030,22 @@ class CodeGen {
             return;
         }
 
+        if ($expr instanceof TupleLitNode) {
+            $el = $expr->elements;
+            if (count($el) > 2) {
+                throw new RuntimeException("Only 2-element tuples supported in codegen on line {$expr->line}");
+            }
+            if (count($el) === 0) return;
+            $this->generateExpr($el[0]);
+            if (count($el) >= 2) {
+                $this->asm->push(X86::RAX);
+                $this->generateExpr($el[1]);
+                $this->asm->mov(X86::RDX, X86::RAX);
+                $this->asm->pop(X86::RAX);
+            }
+            return;
+        }
+
         if ($expr instanceof IdentNode) {
             if (!isset($this->vars[$expr->name])) {
                 throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
@@ -993,6 +1090,14 @@ class CodeGen {
 
         if ($expr instanceof MatchNode) {
             $this->generateMatch($expr, true);
+            return;
+        }
+
+        if ($expr instanceof TupleIndexNode) {
+            $this->generateExpr($expr->object);
+            if ($expr->index === 1) {
+                $this->asm->mov(X86::RAX, X86::RDX);
+            }
             return;
         }
 

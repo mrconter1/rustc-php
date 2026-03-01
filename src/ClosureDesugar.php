@@ -71,12 +71,12 @@ class ClosureDesugar {
                 $struct_type = $struct_lit->struct_name;
                 $closure_vars[$stmt->name] = $struct_type;
                 $scope[$stmt->name]        = $struct_type;
-                return new LetNode($stmt->name, $struct_type, $struct_lit, $stmt->mutable, $stmt->line);
+                return new LetNode($stmt->name, $struct_type, $struct_lit, $stmt->mutable, $stmt->line, $stmt->bindings);
             }
             $new_value = $this->rewriteExpr($stmt->value, $scope, $closure_vars);
             $type      = $stmt->type_name ?? $this->inferExprType($stmt->value, $scope);
             $scope[$stmt->name] = $type;
-            return new LetNode($stmt->name, $stmt->type_name, $new_value, $stmt->mutable, $stmt->line);
+            return new LetNode($stmt->name, $stmt->type_name, $new_value, $stmt->mutable, $stmt->line, $stmt->bindings);
         }
 
         if ($stmt instanceof AssignNode) {
@@ -425,7 +425,7 @@ class ClosureDesugar {
             return new LetNode(
                 $stmt->name, $stmt->type_name,
                 $this->rewriteClosureExpr($stmt->value, $captures, $lb),
-                $stmt->mutable, $stmt->line
+                $stmt->mutable, $stmt->line, $stmt->bindings
             );
         }
         if ($stmt instanceof AssignNode) {

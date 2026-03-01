@@ -533,7 +533,20 @@ class Parser {
             $this->pos++;
         }
 
-        $name = $this->expect(Token::IDENT)->value;
+        $bindings = [];
+        $name = '';
+        if ($this->check(Token::LPAREN)) {
+            $this->pos++;
+            $name = $this->expect(Token::IDENT)->value;
+            $bindings[] = $name;
+            while ($this->check(Token::COMMA)) {
+                $this->pos++;
+                $bindings[] = $this->expect(Token::IDENT)->value;
+            }
+            $this->expect(Token::RPAREN);
+        } else {
+            $name = $this->expect(Token::IDENT)->value;
+        }
 
         $type_name = null;
         if ($this->check(Token::COLON)) {
@@ -545,7 +558,7 @@ class Parser {
         $value = $this->parseExpr();
         $this->expect(Token::SEMICOLON);
 
-        return new LetNode($name, $type_name, $value, $mutable, $line);
+        return new LetNode($name, $type_name, $value, $mutable, $line, $bindings);
     }
 
     private function parseIf(): IfNode {
@@ -830,6 +843,12 @@ class Parser {
 
             while ($this->check(Token::DOT)) {
                 $this->pos++;
+                if ($this->check(Token::INT_LIT)) {
+                    $idx = (int) $this->current()->value;
+                    $this->pos++;
+                    $expr = new TupleIndexNode($expr, $idx, $expr->line);
+                    continue;
+                }
                 $name = $this->expect(Token::IDENT)->value;
                 if ($this->check(Token::LPAREN)) {
                     $this->pos++;
@@ -874,6 +893,15 @@ class Parser {
                 return new UnitLitNode($line);
             }
             $expr = $this->parseExpr();
+            if ($this->check(Token::COMMA)) {
+                $elements = [$expr];
+                while ($this->check(Token::COMMA)) {
+                    $this->pos++;
+                    $elements[] = $this->parseExpr();
+                }
+                $this->expect(Token::RPAREN);
+                return new TupleLitNode($elements, $line);
+            }
             $this->expect(Token::RPAREN);
             while ($this->check(Token::LBRACKET)) {
                 $idx_line = $this->current()->line;
@@ -952,8 +980,22 @@ class Parser {
         }
         if ($this->check(Token::LPAREN)) {
             $this->pos++;
+            if ($this->check(Token::RPAREN)) {
+                $this->pos++;
+                return $ref . '()';
+            }
+            $first = $this->parseType();
+            if ($this->check(Token::COMMA)) {
+                $types = [$first];
+                while ($this->check(Token::COMMA)) {
+                    $this->pos++;
+                    $types[] = $this->parseType();
+                }
+                $this->expect(Token::RPAREN);
+                return $ref . '(' . implode(',', $types) . ')';
+            }
             $this->expect(Token::RPAREN);
-            return $ref . '()';
+            return $ref . $first;
         }
         if ($this->check(Token::IDENT) && $this->current()->value === 'str') {
             $this->pos++;

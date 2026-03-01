@@ -253,7 +253,16 @@ class Monomorphizer {
                 ? preg_replace('/^&(mut )?/', '', $stmt->type_name)
                 : $this->guessExprType($stmt->value);
             if ($inferred !== null) {
-                $this->var_types[$stmt->name] = $inferred;
+                if (!empty($stmt->bindings)) {
+                    $element_types = $this->tupleElementTypes($inferred);
+                    if ($element_types !== null) {
+                        foreach ($stmt->bindings as $i => $name) {
+                            if (isset($element_types[$i])) $this->var_types[$name] = $element_types[$i];
+                        }
+                    }
+                } else {
+                    $this->var_types[$stmt->name] = $inferred;
+                }
             }
         } elseif ($stmt instanceof AssignNode) {
             $this->scanExpr($stmt->value);
@@ -351,6 +360,10 @@ class Monomorphizer {
         } elseif ($expr instanceof DerefNode) {
             $this->scanExpr($expr->operand);
         } elseif ($expr instanceof FieldAccessNode) {
+            $this->scanExpr($expr->object);
+        } elseif ($expr instanceof TupleLitNode) {
+            foreach ($expr->elements as $e) $this->scanExpr($e);
+        } elseif ($expr instanceof TupleIndexNode) {
             $this->scanExpr($expr->object);
         } elseif ($expr instanceof IndexNode) {
             $this->scanExpr($expr->object);
@@ -451,6 +464,21 @@ class Monomorphizer {
 
     private function guessExprType(mixed $expr): ?string {
         if ($expr instanceof UnitLitNode) return '()';
+        if ($expr instanceof TupleLitNode) {
+            $parts = [];
+            foreach ($expr->elements as $e) {
+                $t = $this->guessExprType($e);
+                $parts[] = $t ?? 'i32';
+            }
+            return '(' . implode(',', $parts) . ')';
+        }
+        if ($expr instanceof TupleIndexNode) {
+            $obj = $this->guessExprType($expr->object);
+            if ($obj === null) return null;
+            $elements = $this->tupleElementTypes($obj);
+            if ($elements !== null && isset($elements[$expr->index])) return $elements[$expr->index];
+            return null;
+        }
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
@@ -524,10 +552,36 @@ class Monomorphizer {
         }
     }
 
+    private function tupleElementTypes(string $type): ?array {
+        if (strlen($type) < 2 || $type[0] !== '(' || $type[strlen($type) - 1] !== ')') return null;
+        $inner = substr($type, 1, -1);
+        $depth = 0;
+        $start = 0;
+        $elements = [];
+        for ($i = 0; $i <= strlen($inner); $i++) {
+            $c = $i < strlen($inner) ? $inner[$i] : ',';
+            if ($c === '(') $depth++;
+            elseif ($c === ')') $depth--;
+            elseif (($c === ',' && $depth === 0) || $i === strlen($inner)) {
+                $seg = trim(substr($inner, $start, $i - $start));
+                if ($seg !== '') $elements[] = $seg;
+                $start = $i + 1;
+            }
+        }
+        return $elements;
+    }
+
     private function substituteType(string $type, array $map): string {
         $ref = '';
         if (str_starts_with($type, '&mut ')) { $ref = '&mut '; $type = substr($type, 5); }
         elseif (str_starts_with($type, '&'))  { $ref = '&';     $type = substr($type, 1); }
+
+        $elements = $this->tupleElementTypes($type);
+        if ($elements !== null) {
+            $sub = [];
+            foreach ($elements as $t) $sub[] = $this->substituteType($t, $map);
+            return $ref . '(' . implode(',', $sub) . ')';
+        }
 
         $base = $this->stripGeneric($type);
         $arg  = $this->extractGenericArg($type);
@@ -563,7 +617,7 @@ class Monomorphizer {
         if ($stmt instanceof LetNode) {
             $type_name = $stmt->type_name !== null ? $this->substituteType($stmt->type_name, $map) : null;
             $value     = $this->substituteExpr($stmt->value, $map);
-            return new LetNode($stmt->name, $type_name, $value, $stmt->mutable, $stmt->line);
+            return new LetNode($stmt->name, $type_name, $value, $stmt->mutable, $stmt->line, $stmt->bindings);
         }
         if ($stmt instanceof AssignNode) {
             return new AssignNode($stmt->name, $this->substituteExpr($stmt->value, $map), $stmt->line);
@@ -688,6 +742,14 @@ class Monomorphizer {
         if ($expr instanceof FieldAccessNode) {
             return new FieldAccessNode($this->substituteExpr($expr->object, $map), $expr->field_name, $expr->line);
         }
+        if ($expr instanceof TupleLitNode) {
+            $elements = [];
+            foreach ($expr->elements as $e) $elements[] = $this->substituteExpr($e, $map);
+            return new TupleLitNode($elements, $expr->line);
+        }
+        if ($expr instanceof TupleIndexNode) {
+            return new TupleIndexNode($this->substituteExpr($expr->object, $map), $expr->index, $expr->line);
+        }
         if ($expr instanceof MethodCallNode) {
             $args = [];
             foreach ($expr->args as $a) $args[] = $this->substituteExpr($a, $map);
@@ -717,10 +779,17 @@ class Monomorphizer {
             $inferred = $stmt->type_name !== null
                 ? preg_replace('/^&(mut )?/', '', $stmt->type_name)
                 : $this->guessExprType($stmt->value);
-            if ($inferred !== null) {
+            if (!empty($stmt->bindings)) {
+                $element_types = $inferred !== null ? $this->tupleElementTypes($inferred) : null;
+                if ($element_types !== null) {
+                    foreach ($stmt->bindings as $i => $name) {
+                        if (isset($element_types[$i])) $this->var_types[$name] = $element_types[$i];
+                    }
+                }
+            } elseif ($inferred !== null) {
                 $this->var_types[$stmt->name] = $inferred;
             }
-            return new LetNode($stmt->name, $type_name, $new_value, $stmt->mutable, $stmt->line);
+            return new LetNode($stmt->name, $type_name, $new_value, $stmt->mutable, $stmt->line, $stmt->bindings);
         }
         if ($stmt instanceof AssignNode) {
             return new AssignNode($stmt->name, $this->rewriteExpr($stmt->value), $stmt->line);
@@ -873,6 +942,14 @@ class Monomorphizer {
         if ($expr instanceof FieldAccessNode) {
             return new FieldAccessNode($this->rewriteExpr($expr->object), $expr->field_name, $expr->line);
         }
+        if ($expr instanceof TupleLitNode) {
+            $elements = [];
+            foreach ($expr->elements as $e) $elements[] = $this->rewriteExpr($e);
+            return new TupleLitNode($elements, $expr->line);
+        }
+        if ($expr instanceof TupleIndexNode) {
+            return new TupleIndexNode($this->rewriteExpr($expr->object), $expr->index, $expr->line);
+        }
         if ($expr instanceof IndexNode) {
             return new IndexNode($this->rewriteExpr($expr->object), $this->rewriteExpr($expr->index), $expr->line);
         }
@@ -898,6 +975,13 @@ class Monomorphizer {
         $ref = '';
         if (str_starts_with($type, '&mut ')) { $ref = '&mut '; $type = substr($type, 5); }
         elseif (str_starts_with($type, '&'))  { $ref = '&';     $type = substr($type, 1); }
+
+        $elements = $this->tupleElementTypes($type);
+        if ($elements !== null) {
+            $sub = [];
+            foreach ($elements as $t) $sub[] = $this->rewriteTypeName($t);
+            return $ref . '(' . implode(',', $sub) . ')';
+        }
 
         $base = $this->stripGeneric($type);
         $arg  = $this->extractGenericArg($type);

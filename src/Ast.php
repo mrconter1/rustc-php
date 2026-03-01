@@ -194,12 +194,15 @@ class LetNode {
     public mixed   $value;
     public bool    $mutable;
     public int     $line;
-    public function __construct(string $name, ?string $type_name, mixed $value, bool $mutable, int $line) {
+    /** @var list<string> tuple destructuring binding names, empty for single binding */
+    public array   $bindings;
+    public function __construct(string $name, ?string $type_name, mixed $value, bool $mutable, int $line, array $bindings = []) {
         $this->name      = $name;
         $this->type_name = $type_name;
         $this->value     = $value;
         $this->mutable   = $mutable;
         $this->line      = $line;
+        $this->bindings  = $bindings;
     }
 }
 
@@ -340,6 +343,27 @@ class UnitLitNode {
     public int $line;
     public function __construct(int $line) {
         $this->line = $line;
+    }
+}
+
+class TupleLitNode {
+    /** @var list<mixed> */
+    public array $elements;
+    public int   $line;
+    public function __construct(array $elements, int $line) {
+        $this->elements = $elements;
+        $this->line    = $line;
+    }
+}
+
+class TupleIndexNode {
+    public mixed $object;
+    public int   $index;
+    public int   $line;
+    public function __construct(mixed $object, int $index, int $line) {
+        $this->object = $object;
+        $this->index  = $index;
+        $this->line   = $line;
     }
 }
 

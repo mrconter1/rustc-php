@@ -454,7 +454,7 @@ class ModuleResolver {
     private function rewriteStmt(mixed $stmt, array $name_map, string $prefix): mixed {
         if ($stmt instanceof LetNode) {
             $type_name = $stmt->type_name !== null ? $this->rewriteType($stmt->type_name, $name_map) : null;
-            return new LetNode($stmt->name, $type_name, $this->rewriteExpr($stmt->value, $name_map, $prefix), $stmt->mutable, $stmt->line);
+            return new LetNode($stmt->name, $type_name, $this->rewriteExpr($stmt->value, $name_map, $prefix), $stmt->mutable, $stmt->line, $stmt->bindings);
         }
         if ($stmt instanceof AssignNode) {
             return new AssignNode($stmt->name, $this->rewriteExpr($stmt->value, $name_map, $prefix), $stmt->line);

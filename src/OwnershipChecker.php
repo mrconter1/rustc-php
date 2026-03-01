@@ -12,7 +12,33 @@ class OwnershipChecker {
     private ?string $current_return_type = null;
     private ?string $current_module = null;
 
+    private function tupleElementTypes(string $type): ?array {
+        if (strlen($type) < 2 || $type[0] !== '(' || $type[strlen($type) - 1] !== ')') return null;
+        $inner = substr($type, 1, -1);
+        $depth = 0;
+        $start = 0;
+        $elements = [];
+        for ($i = 0; $i <= strlen($inner); $i++) {
+            $c = $i < strlen($inner) ? $inner[$i] : ',';
+            if ($c === '(') $depth++;
+            elseif ($c === ')') $depth--;
+            elseif (($c === ',' && $depth === 0) || $i === strlen($inner)) {
+                $seg = trim(substr($inner, $start, $i - $start));
+                if ($seg !== '') $elements[] = $seg;
+                $start = $i + 1;
+            }
+        }
+        return $elements;
+    }
+
     private function typeSize(string $type): int {
+        if ($type === '()') return 0;
+        $elements = $this->tupleElementTypes($type);
+        if ($elements !== null) {
+            $n = 0;
+            foreach ($elements as $t) $n += $this->typeSize($t);
+            return $n;
+        }
         if ($type === 'u128') return 16;
         if (in_array($type, self::INT_PRIMITIVES, true) || $type === 'bool') return 8;
         if (isset($this->struct_defs[$type])) return $this->struct_defs[$type]['size'];
@@ -323,9 +349,13 @@ class OwnershipChecker {
             $type = $stmt->type_name ?? $expr_type;
 
             if ($stmt->type_name !== null && $stmt->type_name !== $expr_type && !$this->integerTypesCompatible($stmt->type_name, $expr_type)) {
-                throw new RuntimeException(
-                    "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' on line {$stmt->line}"
-                );
+                $elements = $this->tupleElementTypes($stmt->type_name);
+                $expr_elements = $this->tupleElementTypes($expr_type);
+                if ($elements === null || $expr_elements === null || $elements != $expr_elements) {
+                    throw new RuntimeException(
+                        "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' on line {$stmt->line}"
+                    );
+                }
             }
 
             if ($stmt->value instanceof IdentNode && !$this->isCopy($type)) {
@@ -337,13 +367,29 @@ class OwnershipChecker {
                 }
             }
 
-            $this->vars[$stmt->name] = [
-                'type' => $type,
-                'state' => 'owned',
-                'mutable' => $stmt->mutable,
-                'moved_to' => null,
-                'moved_line' => null,
-            ];
+            if (!empty($stmt->bindings)) {
+                $element_types = $this->tupleElementTypes($type);
+                if ($element_types === null || count($element_types) !== count($stmt->bindings)) {
+                    throw new RuntimeException("Tuple destructuring type mismatch on line {$stmt->line}");
+                }
+                foreach ($stmt->bindings as $i => $name) {
+                    $this->vars[$name] = [
+                        'type' => $element_types[$i],
+                        'state' => 'owned',
+                        'mutable' => $stmt->mutable,
+                        'moved_to' => null,
+                        'moved_line' => null,
+                    ];
+                }
+            } else {
+                $this->vars[$stmt->name] = [
+                    'type' => $type,
+                    'state' => 'owned',
+                    'mutable' => $stmt->mutable,
+                    'moved_to' => null,
+                    'moved_line' => null,
+                ];
+            }
             return;
         }
 
@@ -806,6 +852,17 @@ class OwnershipChecker {
 
     private function exprType(mixed $expr): string {
         if ($expr instanceof UnitLitNode) return '()';
+        if ($expr instanceof TupleLitNode) {
+            $parts = [];
+            foreach ($expr->elements as $e) $parts[] = $this->exprType($e);
+            return '(' . implode(',', $parts) . ')';
+        }
+        if ($expr instanceof TupleIndexNode) {
+            $obj_type = $this->exprType($expr->object);
+            $elements = $this->tupleElementTypes($obj_type);
+            if ($elements !== null && isset($elements[$expr->index])) return $elements[$expr->index];
+            return 'i32';
+        }
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
