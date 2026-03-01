@@ -69,6 +69,8 @@ class OwnershipChecker {
             ];
         }
 
+        $this->registerBuiltinEnumsFromProgram($program);
+
         foreach ($program->functions as $fn) {
             $this->func_sigs[$fn->name] = [
                 'params' => $fn->params,
@@ -96,6 +98,142 @@ class OwnershipChecker {
         foreach ($program->impls as $impl) {
             foreach ($impl->functions as $fn) {
                 $this->checkFunction($fn, $impl->struct_name);
+            }
+        }
+    }
+
+    private function registerBuiltinEnumsFromProgram(ProgramNode $program): void {
+        $types = $this->collectTypesFromProgram($program);
+        foreach ($types as $type) {
+            $this->registerBuiltinEnumIf($type);
+        }
+    }
+
+    private function collectTypesFromProgram(ProgramNode $program): array {
+        $types = [];
+        foreach ($program->functions as $fn) {
+            if ($fn->return_type !== null) $types[$fn->return_type] = true;
+            foreach ($fn->params as $p) { $types[$p['type']] = true; }
+            $this->collectTypesFromStmts($fn->body ?? [], $types);
+        }
+        foreach ($program->impls as $impl) {
+            foreach ($impl->functions as $fn) {
+                if ($fn->return_type !== null) $types[$fn->return_type] = true;
+                foreach ($fn->params as $p) { $types[$p['type']] = true; }
+                $this->collectTypesFromStmts($fn->body ?? [], $types);
+            }
+        }
+        return array_keys($types);
+    }
+
+    private function collectTypesFromStmts(array $stmts, array &$types): void {
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof LetNode) {
+                if ($stmt->type_name !== null) $types[$stmt->type_name] = true;
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
+            if ($stmt instanceof ReturnNode && $stmt->value !== null) $this->collectTypesFromExpr($stmt->value, $types);
+            if ($stmt instanceof ExprStmtNode) $this->collectTypesFromExpr($stmt->expr, $types);
+            if ($stmt instanceof AssignNode) $this->collectTypesFromExpr($stmt->value, $types);
+            if ($stmt instanceof FieldAssignNode) {
+                $this->collectTypesFromExpr($stmt->object, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
+            if ($stmt instanceof DerefAssignNode) {
+                $this->collectTypesFromExpr($stmt->operand, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
+            if ($stmt instanceof IfNode) {
+                $this->collectTypesFromExpr($stmt->condition, $types);
+                $this->collectTypesFromStmts($stmt->then_body, $types);
+                if ($stmt->else_body !== null) $this->collectTypesFromStmts($stmt->else_body, $types);
+            }
+            if ($stmt instanceof WhileNode) {
+                $this->collectTypesFromExpr($stmt->condition, $types);
+                $this->collectTypesFromStmts($stmt->body, $types);
+            }
+            if ($stmt instanceof LoopNode) $this->collectTypesFromStmts($stmt->body, $types);
+            if ($stmt instanceof MatchNode) {
+                $this->collectTypesFromExpr($stmt->subject, $types);
+                foreach ($stmt->arms as $arm) {
+                    if ($arm->enum_name !== null) $types[$arm->enum_name] = true;
+                    $this->collectTypesFromStmts($arm->body, $types);
+                }
+            }
+            if ($stmt instanceof PrintlnNode) {
+                foreach ($stmt->parts as $p) { if (!is_string($p)) $this->collectTypesFromExpr($p, $types); }
+            }
+        }
+    }
+
+    private function collectTypesFromExpr(mixed $expr, array &$types): void {
+        if ($expr instanceof EnumVariantNode) {
+            $types[$expr->enum_name] = true;
+            foreach ($expr->args as $a) $this->collectTypesFromExpr($a, $types);
+        }
+        if ($expr instanceof StructLitNode) $types[$expr->struct_name] = true;
+        if ($expr instanceof CallNode) { foreach ($expr->args as $a) $this->collectTypesFromExpr($a, $types); }
+        if ($expr instanceof MethodCallNode) {
+            $this->collectTypesFromExpr($expr->receiver, $types);
+            foreach ($expr->args as $a) $this->collectTypesFromExpr($a, $types);
+        }
+        if ($expr instanceof BinaryOpNode) {
+            $this->collectTypesFromExpr($expr->left, $types);
+            $this->collectTypesFromExpr($expr->right, $types);
+        }
+        if ($expr instanceof UnaryOpNode || $expr instanceof BorrowNode || $expr instanceof DerefNode) {
+            $this->collectTypesFromExpr($expr->operand, $types);
+        }
+        if ($expr instanceof FieldAccessNode) $this->collectTypesFromExpr($expr->object, $types);
+        if ($expr instanceof IndexNode) {
+            $this->collectTypesFromExpr($expr->object, $types);
+            $this->collectTypesFromExpr($expr->index, $types);
+        }
+        if ($expr instanceof IfNode) {
+            $this->collectTypesFromExpr($expr->condition, $types);
+            $this->collectTypesFromStmts($expr->then_body, $types);
+            if ($expr->else_body !== null) $this->collectTypesFromStmts($expr->else_body, $types);
+        }
+        if ($expr instanceof MatchNode) {
+            $this->collectTypesFromExpr($expr->subject, $types);
+            foreach ($expr->arms as $arm) $this->collectTypesFromStmts($arm->body, $types);
+        }
+    }
+
+    private function registerBuiltinEnumIf(string $type): void {
+        if (isset($this->enum_defs[$type])) return;
+        if (preg_match('/^Option<(.+)>$/', $type, $m)) {
+            $this->enum_defs[$type] = [
+                'variants'    => [
+                    'None' => ['discriminant' => 0, 'fields' => []],
+                    'Some' => ['discriminant' => 1, 'fields' => [$m[1]]],
+                ],
+                'has_payload' => true,
+                'size'        => 16,
+            ];
+            return;
+        }
+        if (str_starts_with($type, 'Result<') && substr($type, -1) === '>') {
+            $inner = substr($type, 7, -1);
+            $depth = 0;
+            $len = strlen($inner);
+            for ($i = 0; $i < $len; $i++) {
+                $c = $inner[$i];
+                if ($c === '<') $depth++;
+                elseif ($c === '>') $depth--;
+                elseif ($c === ',' && $depth === 0) {
+                    $t = trim(substr($inner, 0, $i));
+                    $e = trim(substr($inner, $i + 1));
+                    $this->enum_defs[$type] = [
+                        'variants'    => [
+                            'Ok'  => ['discriminant' => 0, 'fields' => [$t]],
+                            'Err' => ['discriminant' => 1, 'fields' => [$e]],
+                        ],
+                        'has_payload' => true,
+                        'size'        => 16,
+                    ];
+                    return;
+                }
             }
         }
     }

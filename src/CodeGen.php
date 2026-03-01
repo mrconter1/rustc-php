@@ -84,6 +84,8 @@ class CodeGen {
             ];
         }
 
+        $this->registerBuiltinEnumsFromProgram($program);
+
         foreach ($program->functions as $fn) {
             $this->func_sigs[$fn->name] = [
                 'params'      => $fn->params,
@@ -118,6 +120,141 @@ class CodeGen {
         $this->patchCalls();
         $this->patchDataAddresses();
         return $this->asm->getBuffer() . $this->data;
+    }
+
+    private function registerBuiltinEnumsFromProgram(ProgramNode $program): void {
+        $types = $this->collectTypesFromProgram($program);
+        foreach ($types as $type) {
+            $this->registerBuiltinEnumIf($type);
+        }
+    }
+
+    private function collectTypesFromProgram(ProgramNode $program): array {
+        $types = [];
+        foreach ($program->functions as $fn) {
+            if ($fn->return_type !== null) $types[$fn->return_type] = true;
+            foreach ($fn->params as $p) { $types[$p['type']] = true; }
+            $this->collectTypesFromStmts($fn->body ?? [], $types);
+        }
+        foreach ($program->impls as $impl) {
+            foreach ($impl->functions as $fn) {
+                if ($fn->return_type !== null) $types[$fn->return_type] = true;
+                foreach ($fn->params as $p) { $types[$p['type']] = true; }
+                $this->collectTypesFromStmts($fn->body ?? [], $types);
+            }
+        }
+        return array_keys($types);
+    }
+
+    private function collectTypesFromStmts(array $stmts, array &$types): void {
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof LetNode) {
+                if ($stmt->type_name !== null) $types[$stmt->type_name] = true;
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
+            if ($stmt instanceof ReturnNode && $stmt->value !== null) {
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
+            if ($stmt instanceof ExprStmtNode) $this->collectTypesFromExpr($stmt->expr, $types);
+            if ($stmt instanceof AssignNode) $this->collectTypesFromExpr($stmt->value, $types);
+            if ($stmt instanceof FieldAssignNode) {
+                $this->collectTypesFromExpr($stmt->object, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
+            if ($stmt instanceof DerefAssignNode) $this->collectTypesFromExpr($stmt->operand, $types);
+            if ($stmt instanceof IfNode) {
+                $this->collectTypesFromExpr($stmt->condition, $types);
+                $this->collectTypesFromStmts($stmt->then_body, $types);
+                if ($stmt->else_body !== null) $this->collectTypesFromStmts($stmt->else_body, $types);
+            }
+            if ($stmt instanceof WhileNode) {
+                $this->collectTypesFromExpr($stmt->condition, $types);
+                $this->collectTypesFromStmts($stmt->body, $types);
+            }
+            if ($stmt instanceof LoopNode) $this->collectTypesFromStmts($stmt->body, $types);
+            if ($stmt instanceof MatchNode) {
+                $this->collectTypesFromExpr($stmt->subject, $types);
+                foreach ($stmt->arms as $arm) {
+                    if ($arm->enum_name !== null) $types[$arm->enum_name] = true;
+                    $this->collectTypesFromStmts($arm->body, $types);
+                }
+            }
+            if ($stmt instanceof PrintlnNode) {
+                foreach ($stmt->parts as $p) { if (!is_string($p)) $this->collectTypesFromExpr($p, $types); }
+            }
+        }
+    }
+
+    private function collectTypesFromExpr(mixed $expr, array &$types): void {
+        if ($expr instanceof EnumVariantNode) {
+            $types[$expr->enum_name] = true;
+            foreach ($expr->args as $a) $this->collectTypesFromExpr($a, $types);
+        }
+        if ($expr instanceof StructLitNode) $types[$expr->struct_name] = true;
+        if ($expr instanceof CallNode) { foreach ($expr->args as $a) $this->collectTypesFromExpr($a, $types); }
+        if ($expr instanceof MethodCallNode) {
+            $this->collectTypesFromExpr($expr->receiver, $types);
+            foreach ($expr->args as $a) $this->collectTypesFromExpr($a, $types);
+        }
+        if ($expr instanceof BinaryOpNode) {
+            $this->collectTypesFromExpr($expr->left, $types);
+            $this->collectTypesFromExpr($expr->right, $types);
+        }
+        if ($expr instanceof UnaryOpNode || $expr instanceof BorrowNode || $expr instanceof DerefNode) {
+            $this->collectTypesFromExpr($expr->operand, $types);
+        }
+        if ($expr instanceof FieldAccessNode) $this->collectTypesFromExpr($expr->object, $types);
+        if ($expr instanceof IndexNode) {
+            $this->collectTypesFromExpr($expr->object, $types);
+            $this->collectTypesFromExpr($expr->index, $types);
+        }
+        if ($expr instanceof IfNode) {
+            $this->collectTypesFromExpr($expr->condition, $types);
+            $this->collectTypesFromStmts($expr->then_body, $types);
+            if ($expr->else_body !== null) $this->collectTypesFromStmts($expr->else_body, $types);
+        }
+        if ($expr instanceof MatchNode) {
+            $this->collectTypesFromExpr($expr->subject, $types);
+            foreach ($expr->arms as $arm) $this->collectTypesFromStmts($arm->body, $types);
+        }
+    }
+
+    private function registerBuiltinEnumIf(string $type): void {
+        if (isset($this->enum_defs[$type])) return;
+        if (preg_match('/^Option<(.+)>$/', $type, $m)) {
+            $this->enum_defs[$type] = [
+                'variants'    => [
+                    'None' => ['discriminant' => 0, 'fields' => []],
+                    'Some' => ['discriminant' => 1, 'fields' => [$m[1]]],
+                ],
+                'has_payload' => true,
+                'size'        => 16,
+            ];
+            return;
+        }
+        if (str_starts_with($type, 'Result<') && substr($type, -1) === '>') {
+            $inner = substr($type, 7, -1);
+            $depth = 0;
+            $len = strlen($inner);
+            for ($i = 0; $i < $len; $i++) {
+                $c = $inner[$i];
+                if ($c === '<') $depth++;
+                elseif ($c === '>') $depth--;
+                elseif ($c === ',' && $depth === 0) {
+                    $t = trim(substr($inner, 0, $i));
+                    $e = trim(substr($inner, $i + 1));
+                    $this->enum_defs[$type] = [
+                        'variants'    => [
+                            'Ok'  => ['discriminant' => 0, 'fields' => [$t]],
+                            'Err' => ['discriminant' => 1, 'fields' => [$e]],
+                        ],
+                        'has_payload' => true,
+                        'size'        => 16,
+                    ];
+                    return;
+                }
+            }
+        }
     }
 
     private function emitEntryPoint(): void {
@@ -319,6 +456,7 @@ class CodeGen {
     private function collectVars(array $stmts): void {
         foreach ($stmts as $stmt) {
             if ($stmt instanceof LetNode) {
+                $this->collectMatchSlotsFromExpr($stmt->value);
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
                 $size = $this->typeSize($type);
                 $this->stack_size += $size;
@@ -342,20 +480,90 @@ class CodeGen {
                 $this->collectVars($stmt->body);
             }
             if ($stmt instanceof MatchNode) {
-                $subject_type = $this->exprType($stmt->subject);
-                $has_payload  = isset($this->enum_defs[$subject_type]) && $this->enum_defs[$subject_type]['has_payload'];
-                $this->stack_size += 16; // always 16: tag + potential payload
-                $this->match_subject_slots[spl_object_id($stmt)] = [
-                    'offset'      => $this->stack_size,
-                    'has_payload' => $has_payload,
-                    'enum_type'   => $subject_type,
-                ];
-                foreach ($stmt->arms as $arm) {
-                    if ($arm->binding !== null) {
-                        $this->stack_size += 8;
-                        $this->match_binding_slots[spl_object_id($arm)] = ['offset' => $this->stack_size];
-                    }
-                    $this->collectVars($arm->body);
+                $this->registerMatchSlot($stmt);
+            }
+            if ($stmt instanceof ReturnNode && $stmt->value !== null) {
+                $this->collectMatchSlotsFromExpr($stmt->value);
+            }
+            if ($stmt instanceof ExprStmtNode) {
+                $this->collectMatchSlotsFromExpr($stmt->expr);
+            }
+        }
+    }
+
+    private function registerMatchSlot(MatchNode $stmt): void {
+        $subject_type = $this->exprType($stmt->subject);
+        $has_payload  = isset($this->enum_defs[$subject_type]) && $this->enum_defs[$subject_type]['has_payload'];
+        $this->stack_size += 16;
+        $this->match_subject_slots[spl_object_id($stmt)] = [
+            'offset'      => $this->stack_size,
+            'has_payload' => $has_payload,
+            'enum_type'   => $subject_type,
+        ];
+        foreach ($stmt->arms as $arm) {
+            if ($arm->binding !== null) {
+                $this->stack_size += 8;
+                $this->match_binding_slots[spl_object_id($arm)] = ['offset' => $this->stack_size];
+            }
+            $this->collectVars($arm->body);
+        }
+    }
+
+    private function collectMatchSlotsFromExpr(mixed $expr): void {
+        if ($expr instanceof MatchNode) {
+            if (!isset($this->match_subject_slots[spl_object_id($expr)])) {
+                $this->registerMatchSlot($expr);
+            }
+            return;
+        }
+        if ($expr instanceof CallNode) {
+            foreach ($expr->args as $a) $this->collectMatchSlotsFromExpr($a);
+            return;
+        }
+        if ($expr instanceof MethodCallNode) {
+            $this->collectMatchSlotsFromExpr($expr->receiver);
+            foreach ($expr->args as $a) $this->collectMatchSlotsFromExpr($a);
+            return;
+        }
+        if ($expr instanceof BinaryOpNode) {
+            $this->collectMatchSlotsFromExpr($expr->left);
+            $this->collectMatchSlotsFromExpr($expr->right);
+            return;
+        }
+        if ($expr instanceof UnaryOpNode || $expr instanceof BorrowNode || $expr instanceof DerefNode) {
+            $this->collectMatchSlotsFromExpr($expr->operand);
+            return;
+        }
+        if ($expr instanceof FieldAccessNode) $this->collectMatchSlotsFromExpr($expr->object);
+        if ($expr instanceof IndexNode) {
+            $this->collectMatchSlotsFromExpr($expr->object);
+            $this->collectMatchSlotsFromExpr($expr->index);
+        }
+        if ($expr instanceof IfNode) {
+            $this->collectMatchSlotsFromExpr($expr->condition);
+            $this->collectMatchSlotsFromStmts($expr->then_body);
+            if ($expr->else_body !== null) $this->collectMatchSlotsFromStmts($expr->else_body);
+        }
+    }
+
+    private function collectMatchSlotsFromStmts(array $stmts): void {
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof LetNode) $this->collectMatchSlotsFromExpr($stmt->value);
+            if ($stmt instanceof MatchNode) $this->registerMatchSlot($stmt);
+            if ($stmt instanceof ReturnNode && $stmt->value !== null) $this->collectMatchSlotsFromExpr($stmt->value);
+            if ($stmt instanceof ExprStmtNode) $this->collectMatchSlotsFromExpr($stmt->expr);
+            if ($stmt instanceof IfNode) {
+                $this->collectMatchSlotsFromExpr($stmt->condition);
+                $this->collectMatchSlotsFromStmts($stmt->then_body);
+                if ($stmt->else_body !== null) $this->collectMatchSlotsFromStmts($stmt->else_body);
+            }
+            if ($stmt instanceof WhileNode) $this->collectMatchSlotsFromStmts($stmt->body);
+            if ($stmt instanceof LoopNode) $this->collectMatchSlotsFromStmts($stmt->body);
+            if ($stmt instanceof MatchNode) {
+                if (!isset($this->match_subject_slots[spl_object_id($stmt)])) {
+                    $this->registerMatchSlot($stmt);
+                } else {
+                    foreach ($stmt->arms as $arm) $this->collectMatchSlotsFromStmts($arm->body);
                 }
             }
         }

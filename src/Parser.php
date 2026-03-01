@@ -164,6 +164,22 @@ class Parser {
                 $is_wildcard = true;
             } else {
                 $enum_name    = $this->expect(Token::IDENT)->value;
+                if ($this->check(Token::DCOLON) && ($enum_name === 'Option' || $enum_name === 'Result')) {
+                    $this->pos++;
+                    if ($this->check(Token::LT)) {
+                        $builtin = $this->tryParseBuiltinEnumType($enum_name);
+                        if ($builtin !== null) {
+                            $enum_name = $builtin;
+                        }
+                    } else {
+                        $this->pos--;
+                    }
+                } else {
+                    $builtin = $this->tryParseBuiltinEnumType($enum_name);
+                    if ($builtin !== null) {
+                        $enum_name = $builtin;
+                    }
+                }
                 $this->expect(Token::DCOLON);
                 $variant_name = $this->expect(Token::IDENT)->value;
                 if ($this->check(Token::LPAREN)) {
@@ -709,6 +725,42 @@ class Parser {
 
         if ($token->type === Token::IDENT || $token->type === Token::SELF) {
             $this->pos++;
+            $builtin_enum_type = $this->tryParseBuiltinEnumType($token->value);
+            if ($builtin_enum_type !== null) {
+                $this->expect(Token::DCOLON);
+                $variant_name = $this->expect(Token::IDENT)->value;
+                $args = [];
+                if ($this->check(Token::LPAREN)) {
+                    $this->pos++;
+                    while (!$this->check(Token::RPAREN)) {
+                        $args[] = $this->parseExpr();
+                        if ($this->check(Token::COMMA)) $this->pos++;
+                    }
+                    $this->expect(Token::RPAREN);
+                }
+                return new EnumVariantNode($builtin_enum_type, $variant_name, $args, $token->line);
+            }
+            if ($this->check(Token::DCOLON) && ($token->value === 'Option' || $token->value === 'Result')) {
+                $this->pos++;
+                if ($this->check(Token::LT)) {
+                    $builtin_enum_type = $this->tryParseBuiltinEnumType($token->value);
+                    if ($builtin_enum_type !== null) {
+                        $this->expect(Token::DCOLON);
+                        $variant_name = $this->expect(Token::IDENT)->value;
+                        $args = [];
+                        if ($this->check(Token::LPAREN)) {
+                            $this->pos++;
+                            while (!$this->check(Token::RPAREN)) {
+                                $args[] = $this->parseExpr();
+                                if ($this->check(Token::COMMA)) $this->pos++;
+                            }
+                            $this->expect(Token::RPAREN);
+                        }
+                        return new EnumVariantNode($builtin_enum_type, $variant_name, $args, $token->line);
+                    }
+                }
+                $this->pos--;
+            }
             if ($this->check(Token::DCOLON) && in_array($token->value, $this->enum_names)) {
                 $this->expect(Token::DCOLON);
                 $variant_name = $this->expect(Token::IDENT)->value;
@@ -903,11 +955,36 @@ class Parser {
         $name = $this->expect(Token::IDENT)->value;
         if ($this->check(Token::LT)) {
             $this->pos++;
-            $inner = $this->parseType();
+            $inners = [$this->parseType()];
+            while ($this->check(Token::COMMA)) {
+                $this->pos++;
+                $inners[] = $this->parseType();
+            }
             $this->expect(Token::GT);
-            $name = "$name<$inner>";
+            $name = $name . '<' . implode(',', $inners) . '>';
         }
         return $ref . $name;
+    }
+
+    private function tryParseBuiltinEnumType(string $base): ?string {
+        if (!$this->check(Token::LT)) {
+            return null;
+        }
+        if ($base === 'Option') {
+            $this->pos++;
+            $t = $this->parseType();
+            $this->expect(Token::GT);
+            return "Option<$t>";
+        }
+        if ($base === 'Result') {
+            $this->pos++;
+            $t = $this->parseType();
+            $this->expect(Token::COMMA);
+            $e = $this->parseType();
+            $this->expect(Token::GT);
+            return "Result<$t,$e>";
+        }
+        return null;
     }
 
     private function skipAttributes(): void {
