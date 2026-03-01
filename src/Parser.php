@@ -197,6 +197,9 @@ class Parser {
         $methods = [];
         while (!$this->check(Token::RBRACE)) {
             $this->skipAttributes();
+            if ($this->check(Token::CONST)) {
+                $this->pos++;
+            }
             $this->expect(Token::FN);
             $fn_name = $this->expect(Token::IDENT)->value;
             $fn_line = $this->current()->line;
@@ -296,6 +299,9 @@ class Parser {
     }
 
     private function parseFunction(bool $is_pub = false): FunctionNode {
+        if ($this->check(Token::CONST)) {
+            $this->pos++;
+        }
         $this->expect(Token::FN);
         $name = $this->expect(Token::IDENT)->value;
         $type_params = $this->parseTypeParams();

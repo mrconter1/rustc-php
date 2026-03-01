@@ -18,6 +18,7 @@ class Lexer {
         'loop'     => Token::LOOP,
         'break'    => Token::BREAK,
         'continue' => Token::CONTINUE,
+        'const'    => Token::CONST,
         'struct'   => Token::STRUCT,
         'true'     => Token::TRUE,
         'false'    => Token::FALSE,
