@@ -152,6 +152,7 @@ class CodeGen {
     }
 
     private function typeSize(string $type): int {
+        if ($type === '()') return 0;
         if ($type === 'u128') return 16;
         if (in_array($type, self::INT_PRIMITIVES, true) || $type === 'bool') return 8;
         if (isset($this->struct_defs[$type])) return $this->struct_defs[$type]['size'];
@@ -170,6 +171,7 @@ class CodeGen {
     }
 
     private function exprType(mixed $expr): string {
+        if ($expr instanceof UnitLitNode) return '()';
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
@@ -616,6 +618,9 @@ class CodeGen {
     }
 
     private function generateExpr(mixed $expr): void {
+        if ($expr instanceof UnitLitNode) {
+            return;
+        }
         if ($expr instanceof IntLitNode) {
             $this->asm->mov_imm32(X86::RAX, $expr->value);
             return;

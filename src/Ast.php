@@ -323,6 +323,13 @@ class BoolLitNode {
     }
 }
 
+class UnitLitNode {
+    public int $line;
+    public function __construct(int $line) {
+        $this->line = $line;
+    }
+}
+
 class IdentNode {
     public string $name;
     public int    $line;

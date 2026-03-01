@@ -802,7 +802,12 @@ class Parser {
         }
 
         if ($token->type === Token::LPAREN) {
+            $line = $token->line;
             $this->pos++;
+            if ($this->check(Token::RPAREN)) {
+                $this->pos++;
+                return new UnitLitNode($line);
+            }
             $expr = $this->parseExpr();
             $this->expect(Token::RPAREN);
             while ($this->check(Token::LBRACKET)) {
@@ -880,6 +885,11 @@ class Parser {
                 $this->pos++;
             }
         }
+        if ($this->check(Token::LPAREN)) {
+            $this->pos++;
+            $this->expect(Token::RPAREN);
+            return $ref . '()';
+        }
         if ($this->check(Token::IDENT) && $this->current()->value === 'str') {
             $this->pos++;
             return $ref . 'str';
@@ -893,7 +903,7 @@ class Parser {
         $name = $this->expect(Token::IDENT)->value;
         if ($this->check(Token::LT)) {
             $this->pos++;
-            $inner = $this->expect(Token::IDENT)->value;
+            $inner = $this->parseType();
             $this->expect(Token::GT);
             $name = "$name<$inner>";
         }

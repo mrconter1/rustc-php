@@ -447,6 +447,7 @@ class Monomorphizer {
     }
 
     private function guessExprType(mixed $expr): ?string {
+        if ($expr instanceof UnitLitNode) return '()';
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
