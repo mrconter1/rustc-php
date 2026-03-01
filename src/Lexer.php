@@ -136,6 +136,7 @@ class Lexer {
         $ch   = $this->source[$this->pos++];
         $next = $this->charAt($this->pos);
 
+        if ($ch === '#') { return new Token(Token::HASH, '#', $line); }
         if ($ch === '.' && $next === '.') { $this->pos++; return new Token(Token::DOTDOT,    '..',  $line); }
         if ($ch === ':' && $next === ':') { $this->pos++; return new Token(Token::DCOLON,    '::',  $line); }
         if ($ch === '=' && $next === '>') { $this->pos++; return new Token(Token::FAT_ARROW, '=>',  $line); }

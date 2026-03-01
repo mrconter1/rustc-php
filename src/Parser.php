@@ -20,6 +20,7 @@ class Parser {
     public function parse(): ProgramNode {
         $saved = $this->pos;
         while (!$this->check(Token::EOF)) {
+            $this->skipAttributes();
             if ($this->check(Token::PUB)) $this->pos++;
             if ($this->check(Token::MOD) || $this->check(Token::USE)) {
                 while (!$this->check(Token::SEMICOLON) && !$this->check(Token::EOF)) $this->pos++;
@@ -73,6 +74,7 @@ class Parser {
         $uses      = [];
         $traits    = [];
         while (!$this->check(Token::EOF)) {
+            $this->skipAttributes();
             $is_pub = false;
             if ($this->check(Token::PUB)) {
                 $is_pub = true;
@@ -194,6 +196,7 @@ class Parser {
         $this->expect(Token::LBRACE);
         $methods = [];
         while (!$this->check(Token::RBRACE)) {
+            $this->skipAttributes();
             $this->expect(Token::FN);
             $fn_name = $this->expect(Token::IDENT)->value;
             $fn_line = $this->current()->line;
@@ -256,6 +259,7 @@ class Parser {
         $this->expect(Token::LBRACE);
         $functions = [];
         while (!$this->check(Token::RBRACE)) {
+            $this->skipAttributes();
             $fn_pub = false;
             if ($this->check(Token::PUB)) {
                 $fn_pub = true;
@@ -888,6 +892,22 @@ class Parser {
             $name = "$name<$inner>";
         }
         return $ref . $name;
+    }
+
+    private function skipAttributes(): void {
+        while ($this->check(Token::HASH)) {
+            $this->pos++;
+            if ($this->check(Token::BANG)) {
+                $this->pos++;
+            }
+            $this->expect(Token::LBRACKET);
+            $depth = 1;
+            while ($depth > 0 && !$this->check(Token::EOF)) {
+                if ($this->check(Token::LBRACKET)) $depth++;
+                elseif ($this->check(Token::RBRACKET)) $depth--;
+                $this->pos++;
+            }
+        }
     }
 
     private function expect(string $type): Token {
