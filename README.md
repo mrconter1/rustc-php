@@ -41,13 +41,15 @@ wsl ./main; echo $?
 ## What's supported
 
 **Types**
-- `i32`, `bool`
+- `i32`, `bool`, `u8`, `u16`, `u32`, `u64`, `u128`, `usize`
 - `String` (heap string, move semantics)
 - `&str` and string slice indexing (`s[0]`)
 - `&T`, `&mut T` references with borrow checking
 - Structs (named fields, field access, method calls)
 - Enums with optional tuple payloads and `match`
+- Unit type `()` in expressions, return types, and generic arguments
 - Generics on functions, structs, and `impl` blocks
+- Builtin `Option<T>` and `Result<T, E>` with `Some`/`None`, `Ok`/`Err` (no source definitions required)
 
 **Control flow**
 - `if` / `else` (including as expressions)
@@ -58,6 +60,7 @@ wsl ./main; echo $?
 
 **Functions and closures**
 - Free functions with multiple parameters and explicit return types
+- `const fn` (accepted and treated as a regular function)
 - `impl` blocks with `self`, `&self`, `&mut self`
 - Trait definitions and `impl Trait for Type`
 - Default trait method implementations
@@ -68,10 +71,11 @@ wsl ./main; echo $?
 - Borrow and mutable borrow checking
 - `Copy` inference for `i32`, `bool`, `&T`, and all-copy structs/enums
 
-**Modules**
+**Modules and syntax**
 - `mod name;` declarations with file-based module resolution
 - `pub` visibility on functions, structs, and fields
 - `use` paths for cross-module imports
+- Attributes `#[...]` and `#![...]` (parsed and skipped)
 
 **Output**
 - `println!("{}", expr)` — print a single value
@@ -99,13 +103,13 @@ Roughly in order of impact:
 
 1. Compound assignment operators (`+=`, `-=`, `*=`, `/=`)
 2. Tuples and tuple destructuring
-3. Additional integer types (`u8`, `u32`, `u64`, `i64`, `usize`)
-4. `Vec<T>` and heap allocation
-5. `f32` / `f64` floating point
-6. `const` and `static` items
-7. The `?` operator and `Result<T, E>`
-8. Closures as function arguments (`fn apply(f: impl Fn(i32) -> i32)`)
-9. Zero-parameter closures (`|| expr`)
-10. Pattern matching beyond single-level enum variants
-11. Multi-format `println!` (only `"{}"` with one argument is supported)
-12. Lifetimes (borrow checker is simplified — no lifetime annotations)
+3. `Vec<T>` and heap allocation
+4. `f32` / `f64` floating point
+5. `const` and `static` items
+6. The `?` operator (Result is supported; `?` is not)
+7. Closures as function arguments (`fn apply(f: impl Fn(i32) -> i32)`)
+8. Zero-parameter closures (`|| expr`)
+9. Pattern matching beyond single-level enum variants
+10. Multi-format `println!` (only `"{}"` with one argument is supported)
+11. Lifetimes (borrow checker is simplified — no lifetime annotations)
+12. Additional signed integer types (`i8`, `i16`, `i64`, `i128`)
