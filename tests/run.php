@@ -14,7 +14,7 @@ require_once $src_dir . '/ClosureDesugar.php';
 require_once $src_dir . '/Monomorphizer.php';
 require_once $src_dir . '/OwnershipChecker.php';
 require_once $src_dir . '/X86.php';
-require_once $src_dir . '/CodeGen.php';
+require_once $src_dir . '/CodeGen/CodeGen.php';
 require_once $src_dir . '/Elf.php';
 
 $files = [];

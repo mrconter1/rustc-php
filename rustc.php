@@ -7,7 +7,7 @@ require_once __DIR__ . '/src/ForLoopDesugar.php';
 require_once __DIR__ . '/src/ClosureDesugar.php';
 require_once __DIR__ . '/src/Monomorphizer.php';
 require_once __DIR__ . '/src/OwnershipChecker.php';
-require_once __DIR__ . '/src/CodeGen.php';
+require_once __DIR__ . '/src/CodeGen/CodeGen.php';
 require_once __DIR__ . '/src/Elf.php';
 
 if ($argc < 2) {
