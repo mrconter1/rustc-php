@@ -163,6 +163,10 @@ trait CodeGenExpr {
                 $var = $this->vars[$name];
                 $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
                 $inner_type = $var['type'];
+                if (preg_match('/^Box<.+>$/', $inner_type)) {
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                    return;
+                }
                 if ($this->isRawPointerType($inner_type)) {
                     $this->asm->load(X86::RAX, X86::RAX, 0);
                     return;
@@ -300,6 +304,27 @@ trait CodeGenExpr {
                 $this->asm->mov(X86::RDI, X86::RAX);
                 $this->asm->mov_imm32(X86::RAX, 60);
                 $this->asm->syscall();
+                return;
+            }
+            if ($expr->name === 'Box::new' && count($expr->args) === 1) {
+                $inner_type = $this->exprType($expr->args[0]);
+                $size = $this->typeSize($inner_type);
+                $this->generateExpr($expr->args[0]);
+                if ($this->isFatType($inner_type)) {
+                    $this->asm->push(X86::RDX);
+                }
+                $this->asm->push(X86::RAX);
+                $this->asm->mov_imm32(X86::RDI, $size);
+                $patch_pos = $this->asm->call_rel32();
+                $this->call_patches[] = [$patch_pos, 'alloc'];
+                $this->asm->mov(X86::RCX, X86::RAX);
+                $this->asm->pop(X86::RAX);
+                $this->asm->store(X86::RCX, 0, X86::RAX);
+                if ($this->isFatType($inner_type)) {
+                    $this->asm->pop(X86::RDX);
+                    $this->asm->store(X86::RCX, 8, X86::RDX);
+                }
+                $this->asm->mov(X86::RAX, X86::RCX);
                 return;
             }
 

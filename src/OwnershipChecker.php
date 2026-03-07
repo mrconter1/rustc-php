@@ -920,6 +920,13 @@ $is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arm
             if ($expr->name === 'alloc') {
                 throw new RuntimeException("Undefined function 'alloc'" . $this->loc($expr) . "");
             }
+            if ($expr->name === 'Box::new') {
+                if (count($expr->args) !== 1) {
+                    throw new RuntimeException("Box::new() takes exactly 1 argument" . $this->loc($expr) . "");
+                }
+                $this->checkExpr($expr->args[0]);
+                return;
+            }
             if ($expr->name !== 'exit' && isset($this->func_sigs[$expr->name])) {
                 $sig = $this->func_sigs[$expr->name];
                 $expected = count($sig['params']);
@@ -1114,6 +1121,7 @@ $is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arm
         }
         if ($expr instanceof DerefNode) {
             $inner_type = $this->exprType($expr->operand);
+            if (preg_match('/^Box<(.+)>$/', $inner_type, $m)) return $m[1];
             if ($this->isRawPointerType($inner_type)) {
                 return substr($inner_type, strpos($inner_type, ' ') + 1);
             }
@@ -1150,6 +1158,9 @@ $is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arm
             return 'i32';
         }
         if ($expr instanceof CallNode) {
+            if ($expr->name === 'Box::new' && count($expr->args) === 1) {
+                return 'Box<' . $this->exprType($expr->args[0]) . '>';
+            }
             if (isset($this->func_sigs[$expr->name])) {
                 return $this->func_sigs[$expr->name]['return_type'] ?? 'i32';
             }

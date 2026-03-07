@@ -27,6 +27,7 @@ trait CodeGenTypes {
     private function typeSize(string $type): int {
         if ($type === '()') return 0;
         if ($this->isRawPointerType($type)) return 8;
+        if (preg_match('/^Box<(.+)>$/', $type, $m)) return 8;
         $elements = $this->tupleElementTypes($type);
         if ($elements !== null) {
             $n = 0;
@@ -119,6 +120,7 @@ trait CodeGenTypes {
         }
         if ($expr instanceof DerefNode) {
             $inner_type = $this->exprType($expr->operand);
+            if (preg_match('/^Box<(.+)>$/', $inner_type, $m)) return $m[1];
             if (str_starts_with($inner_type, '&mut ')) return substr($inner_type, 5);
             if (str_starts_with($inner_type, '&')) return substr($inner_type, 1);
             return $inner_type;
@@ -155,6 +157,9 @@ trait CodeGenTypes {
             return 'i32';
         }
         if ($expr instanceof CallNode) {
+            if ($expr->name === 'Box::new' && count($expr->args) === 1) {
+                return 'Box<' . $this->exprType($expr->args[0]) . '>';
+            }
             if (isset($this->func_sigs[$expr->name])) {
                 return $this->func_sigs[$expr->name]['return_type'] ?? 'i32';
             }
