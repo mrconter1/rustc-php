@@ -83,7 +83,10 @@ class ForLoopDesugar {
         // __for_i_N = __for_i_N + 1;
         $incr = new AssignNode($idx_var, new BinaryOpNode(new IdentNode($idx_var, $line), '+', new IntLitNode(1, $line), $line), $line);
 
-        $loop_body = array_merge([$guard, $let_var], $body, [$incr]);
+        $bodyWithContinueRewritten = $this->replaceContinueWithIncrBreak($body, $incr, $line);
+        $inner_body = array_merge($bodyWithContinueRewritten, [$incr, new BreakNode($line)]);
+        $inner_loop = new LoopNode($inner_body, $line);
+        $loop_body = array_merge([$guard, $let_var], [$inner_loop]);
         $loop = new LoopNode($loop_body, $line);
 
         return [$let_idx, $let_end, $loop];
@@ -104,6 +107,53 @@ class ForLoopDesugar {
         $loop = new LoopNode([$match], $line);
 
         return [$let_iter, $loop];
+    }
+
+    /** Replace ContinueNode with [incr, break] in for-loop body; do not replace continue inside nested loops. */
+    private function replaceContinueWithIncrBreak(array $body, AssignNode $incr, int $line, bool $replaceContinue = true): array {
+        $out = [];
+        foreach ($body as $stmt) {
+            if ($stmt instanceof ContinueNode && $replaceContinue) {
+                $out[] = $incr;
+                $out[] = new BreakNode($stmt->line);
+            } elseif ($stmt instanceof IfNode) {
+                $out[] = new IfNode(
+                    $stmt->condition,
+                    $this->replaceContinueWithIncrBreak($stmt->then_body, $incr, $line, $replaceContinue),
+                    $stmt->else_body !== null ? $this->replaceContinueWithIncrBreak($stmt->else_body, $incr, $line, $replaceContinue) : null,
+                    $stmt->line
+                );
+            } elseif ($stmt instanceof LoopNode) {
+                $out[] = new LoopNode($this->replaceContinueWithIncrBreak($stmt->body, $incr, $line, false), $stmt->line);
+            } elseif ($stmt instanceof MatchNode) {
+                $arms = [];
+                foreach ($stmt->arms as $arm) {
+                    $arms[] = new MatchArmNode(
+                        $arm->is_wildcard, $arm->enum_name, $arm->variant_name,
+                        $arm->binding,
+                        $this->replaceContinueWithIncrBreak($arm->body, $incr, $line, $replaceContinue),
+                        $arm->line
+                    );
+                }
+                $out[] = new MatchNode($stmt->subject, $arms, $stmt->line);
+            } elseif ($stmt instanceof IfLetNode) {
+                $out[] = new IfLetNode(
+                    $stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding,
+                    $this->replaceContinueWithIncrBreak($stmt->then_body, $incr, $line, $replaceContinue),
+                    $stmt->else_body !== null ? $this->replaceContinueWithIncrBreak($stmt->else_body, $incr, $line, $replaceContinue) : null,
+                    $stmt->line
+                );
+            } elseif ($stmt instanceof WhileNode) {
+                $out[] = new WhileNode($stmt->condition, $this->replaceContinueWithIncrBreak($stmt->body, $incr, $line, $replaceContinue), $stmt->line);
+            } elseif ($stmt instanceof WhileLetNode) {
+                $out[] = new WhileLetNode($stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding, $this->replaceContinueWithIncrBreak($stmt->body, $incr, $line, $replaceContinue), $stmt->line);
+            } elseif ($stmt instanceof BreakNode && $replaceContinue) {
+                $out[] = new BreakNode($stmt->line, 1);
+            } else {
+                $out[] = $stmt;
+            }
+        }
+        return $out;
     }
 
     private function rewriteStmt(mixed $stmt): mixed {

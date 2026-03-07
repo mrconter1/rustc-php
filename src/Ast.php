@@ -368,8 +368,10 @@ class LoopNode {
 
 class BreakNode {
     public int $line;
-    public function __construct(int $line) {
+    public int $level;
+    public function __construct(int $line, int $level = 0) {
         $this->line = $line;
+        $this->level = $level;
     }
 }
 

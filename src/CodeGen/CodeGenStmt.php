@@ -121,10 +121,12 @@ trait CodeGenStmt {
         }
 
         if ($stmt instanceof BreakNode) {
-            if (empty($this->loop_stack)) {
+            $level = $stmt->level ?? 0;
+            $depth = $level + 1;
+            if (count($this->loop_stack) < $depth) {
                 throw new RuntimeException("break outside of loop at line {$stmt->line}");
             }
-            $ctx = &$this->loop_stack[count($this->loop_stack) - 1];
+            $ctx = &$this->loop_stack[count($this->loop_stack) - $depth];
             $ctx['break_patches'][] = $this->asm->jmp_rel32();
             return;
         }

@@ -1,3 +1,8 @@
 // error: type mismatch
-const X: i32 = true;
-fn main() {}
+
+const N: i32 = 100;
+const B: i32 = true;
+
+fn main() {
+    exit(N);
+}
