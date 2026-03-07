@@ -53,7 +53,7 @@ wsl ./main; echo $?
 - Generics on functions, structs, and `impl` blocks
 - Builtin `Option<T>` and `Result<T, E>` with `Some`/`None`, `Ok`/`Err` (no source definitions required)
 - Builtin `Box<T>` (`Box::new`, deref)
-- `alloc::VecI32` (struct with `ptr`/`cap`/`len`, `VecI32::new()`, `push`, indexing `v[i]` and `v[i] = x`)
+- Generic `alloc::Vec<T>` (monomorphized: `Vec<i32>`, `Vec<u8>`, etc.; `Vec::new()`, `push`, indexing `v[i]` and `v[i] = x`; uses `size_of::<T>()` in alloc crate). Legacy `alloc::VecI32` also supported.
 
 **Control flow**
 - `if` / `else` (including as expressions)
@@ -66,7 +66,7 @@ wsl ./main; echo $?
 **Heap and allocation**
 - Heap runtime (mmap + bump allocator, free-list for dealloc/realloc)
 - `alloc` crate: `alloc()`, `dealloc()`, `realloc()` (only callable from inside the `alloc` crate)
-- `alloc::VecI32` as above
+- Generic `alloc::Vec<T>` as above
 
 **Functions and closures**
 - Free functions with multiple parameters and explicit return types
@@ -113,7 +113,7 @@ Test cases live in `tests/cases/` organized into `fundamentals/valid/`, `fundame
 
 Roughly in order of impact:
 
-1. Generic `Vec<T>` and user-callable `alloc()` outside the `alloc` crate (heap and `alloc::VecI32` are supported)
+1. User-callable `alloc()` outside the `alloc` crate (heap and `alloc::Vec<T>` are supported)
 2. `f32` / `f64` floating point
 3. The `?` operator (Result is supported; `?` is not)
 4. Closures as function arguments (`fn apply(f: impl Fn(i32) -> i32)`)
