@@ -67,11 +67,21 @@ trait CodeGenExpr {
         }
 
         if ($expr instanceof IdentNode) {
-            if (!isset($this->vars[$expr->name])) {
+            if (isset($this->vars[$expr->name])) {
+                $var = $this->vars[$expr->name];
+                $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
+            } elseif (isset($this->const_exprs[$expr->name])) {
+                $this->generateExpr($this->const_exprs[$expr->name]['expr']);
+                return;
+            } elseif (isset($this->static_offsets[$expr->name])) {
+                $info = $this->static_offsets[$expr->name];
+                $patch_pos = $this->asm->mov_imm64(X86::RAX);
+                $this->data_patches[] = [$patch_pos, $info['offset']];
+                $this->asm->load(X86::RAX, X86::RAX, 0);
+                return;
+            } else {
                 throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
             }
-            $var = $this->vars[$expr->name];
-            $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
             if ($this->isRawPointerType($var['type'])) {
                 return;
             }

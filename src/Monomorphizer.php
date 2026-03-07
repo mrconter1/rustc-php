@@ -125,11 +125,24 @@ class Monomorphizer {
         }
         unset($impl);
 
+        $consts = [];
+        foreach ($program->consts as $c) {
+            $consts[] = new ConstItemNode($c->name, $this->rewriteTypeName($c->type), $this->rewriteExpr($c->value), $c->line);
+        }
+        $statics = [];
+        foreach ($program->statics as $s) {
+            $statics[] = new StaticItemNode($s->name, $this->rewriteTypeName($s->type), $this->rewriteExpr($s->value), $s->mutable, $s->line);
+        }
         return new ProgramNode(
             $this->concrete_fns,
             $this->concrete_structs,
             $this->concrete_impls,
-            $this->concrete_enums
+            $this->concrete_enums,
+            [],
+            [],
+            array_values($this->traits),
+            $consts,
+            $statics
         );
     }
 

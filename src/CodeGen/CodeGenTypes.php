@@ -97,7 +97,15 @@ trait CodeGenTypes {
             return $expr->target_type;
         }
         if ($expr instanceof IdentNode) {
-            $type = $this->vars[$expr->name]['type'] ?? 'i32';
+            if (isset($this->vars[$expr->name])) {
+                $type = $this->vars[$expr->name]['type'];
+            } elseif (isset($this->const_exprs[$expr->name])) {
+                return $this->const_exprs[$expr->name]['type'];
+            } elseif (isset($this->static_offsets[$expr->name])) {
+                return $this->static_offsets[$expr->name]['type'];
+            } else {
+                $type = 'i32';
+            }
             if (str_starts_with($type, '&mut ')) return substr($type, 5);
             if (str_starts_with($type, '&')) return substr($type, 1);
             return $type;

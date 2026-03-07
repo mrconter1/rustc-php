@@ -328,10 +328,12 @@ class ModuleResolver {
         $all_impls     = [];
         $all_enums     = [];
         $all_traits    = [];
+        $all_consts    = [];
+        $all_statics   = [];
 
-        $this->flattenModule($tree, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums, $all_traits);
+        $this->flattenModule($tree, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums, $all_traits, $all_consts, $all_statics);
 
-        return new ProgramNode($all_functions, $all_structs, $all_impls, $all_enums, [], [], $all_traits);
+        return new ProgramNode($all_functions, $all_structs, $all_impls, $all_enums, [], [], $all_traits, $all_consts, $all_statics);
     }
 
     private function flattenModule(
@@ -341,7 +343,9 @@ class ModuleResolver {
         array &$all_structs,
         array &$all_impls,
         array &$all_enums,
-        array &$all_traits
+        array &$all_traits,
+        array &$all_consts,
+        array &$all_statics
     ): void {
         $prefix  = $tree['prefix'];
         $ast     = $tree['ast'];
@@ -410,8 +414,17 @@ class ModuleResolver {
             $all_traits[] = new TraitNode($mangled_name, $trait->methods, $trait->line, $trait->is_pub);
         }
 
+        foreach ($ast->consts as $c) {
+            $mangled_name = $prefix === '' ? $c->name : $prefix . '__' . $c->name;
+            $all_consts[] = new ConstItemNode($mangled_name, $this->rewriteType($c->type, $name_map), $this->rewriteExpr($c->value, $name_map, $prefix), $c->line);
+        }
+        foreach ($ast->statics as $s) {
+            $mangled_name = $prefix === '' ? $s->name : $prefix . '__' . $s->name;
+            $all_statics[] = new StaticItemNode($mangled_name, $this->rewriteType($s->type, $name_map), $this->rewriteExpr($s->value, $name_map, $prefix), $s->mutable, $s->line);
+        }
+
         foreach ($tree['children'] as $child) {
-            $this->flattenModule($child, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums, $all_traits);
+            $this->flattenModule($child, $import_maps, $all_functions, $all_structs, $all_impls, $all_enums, $all_traits, $all_consts, $all_statics);
         }
     }
 

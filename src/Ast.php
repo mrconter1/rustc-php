@@ -8,7 +8,9 @@ class ProgramNode {
     public array $mod_decls;
     public array $uses;
     public array $traits;
-    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = [], array $mod_decls = [], array $uses = [], array $traits = []) {
+    public array $consts;
+    public array $statics;
+    public function __construct(array $functions, array $structs = [], array $impls = [], array $enums = [], array $mod_decls = [], array $uses = [], array $traits = [], array $consts = [], array $statics = []) {
         $this->functions = $functions;
         $this->structs   = $structs;
         $this->impls     = $impls;
@@ -16,6 +18,36 @@ class ProgramNode {
         $this->mod_decls = $mod_decls;
         $this->uses      = $uses;
         $this->traits    = $traits;
+        $this->consts    = $consts;
+        $this->statics   = $statics;
+    }
+}
+
+class ConstItemNode {
+    public string $name;
+    public string $type;
+    public mixed  $value;
+    public int   $line;
+    public function __construct(string $name, string $type, mixed $value, int $line) {
+        $this->name  = $name;
+        $this->type  = $type;
+        $this->value = $value;
+        $this->line  = $line;
+    }
+}
+
+class StaticItemNode {
+    public string $name;
+    public string $type;
+    public mixed  $value;
+    public bool   $mutable;
+    public int   $line;
+    public function __construct(string $name, string $type, mixed $value, bool $mutable, int $line) {
+        $this->name    = $name;
+        $this->type    = $type;
+        $this->value   = $value;
+        $this->mutable = $mutable;
+        $this->line    = $line;
     }
 }
 

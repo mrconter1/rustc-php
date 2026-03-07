@@ -9,6 +9,8 @@ class OwnershipChecker {
     private array $func_sigs = [];
     private array $struct_defs = [];
     private array $enum_defs   = [];
+    private array $const_types = [];
+    private array $static_types = [];
     private ?string $current_return_type = null;
     private ?string $current_module = null;
 
@@ -96,6 +98,23 @@ class OwnershipChecker {
         }
 
         $this->registerBuiltinEnumsFromProgram($program);
+
+        foreach ($program->consts as $c) {
+            $this->checkExpr($c->value);
+            $got = $this->exprType($c->value);
+            if ($got !== $c->type && !$this->integerTypesCompatible($c->type, $got)) {
+                throw new RuntimeException("Const '{$c->name}' type mismatch: expected '{$c->type}', got '$got' on line {$c->line}");
+            }
+            $this->const_types[$c->name] = $c->type;
+        }
+        foreach ($program->statics as $s) {
+            $this->checkExpr($s->value);
+            $got = $this->exprType($s->value);
+            if ($got !== $s->type && !$this->integerTypesCompatible($s->type, $got)) {
+                throw new RuntimeException("Static '{$s->name}' type mismatch: expected '{$s->type}', got '$got' on line {$s->line}");
+            }
+            $this->static_types[$s->name] = $s->type;
+        }
 
         foreach ($program->functions as $fn) {
             $this->func_sigs[$fn->name] = [
@@ -1030,7 +1049,15 @@ class OwnershipChecker {
             return $expr->target_type;
         }
         if ($expr instanceof IdentNode) {
-            $type = $this->vars[$expr->name]['type'] ?? 'i32';
+            if (isset($this->vars[$expr->name])) {
+                $type = $this->vars[$expr->name]['type'];
+            } elseif (isset($this->const_types[$expr->name])) {
+                return $this->const_types[$expr->name];
+            } elseif (isset($this->static_types[$expr->name])) {
+                return $this->static_types[$expr->name];
+            } else {
+                $type = 'i32';
+            }
             if (str_starts_with($type, '&mut ')) return substr($type, 5);
             if (str_starts_with($type, '&')) return substr($type, 1);
             return $type;

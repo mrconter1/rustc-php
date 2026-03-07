@@ -27,6 +27,7 @@ class Token {
     const FOR       = 'FOR';
     const IN        = 'IN';
     const AS        = 'AS';
+    const STATIC    = 'STATIC';
     const HASH      = 'HASH';     // #
     const FAT_ARROW = 'FAT_ARROW'; // =>
 

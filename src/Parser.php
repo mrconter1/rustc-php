@@ -73,6 +73,8 @@ class Parser {
         $mod_decls = [];
         $uses      = [];
         $traits    = [];
+        $consts    = [];
+        $statics   = [];
         while (!$this->check(Token::EOF)) {
             $this->skipAttributes();
             $is_pub = false;
@@ -92,11 +94,47 @@ class Parser {
                 $enums[] = $this->parseEnum($is_pub);
             } elseif ($this->check(Token::IMPL)) {
                 $impls[] = $this->parseImpl();
+            } elseif ($this->check(Token::CONST)) {
+                $next = $this->tokens[$this->pos + 1] ?? null;
+                if ($next && $next->type === Token::IDENT) {
+                    $consts[] = $this->parseConstItem();
+                } else {
+                    $functions[] = $this->parseFunction($is_pub);
+                }
+            } elseif ($this->check(Token::STATIC)) {
+                $statics[] = $this->parseStaticItem();
             } else {
                 $functions[] = $this->parseFunction($is_pub);
             }
         }
-        return new ProgramNode($functions, $structs, $impls, $enums, $mod_decls, $uses, $traits);
+        return new ProgramNode($functions, $structs, $impls, $enums, $mod_decls, $uses, $traits, $consts, $statics);
+    }
+
+    private function parseConstItem(): ConstItemNode {
+        $line = $this->expect(Token::CONST)->line;
+        $name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::COLON);
+        $type = $this->parseType();
+        $this->expect(Token::EQ);
+        $value = $this->parseExpr();
+        $this->expect(Token::SEMICOLON);
+        return new ConstItemNode($name, $type, $value, $line);
+    }
+
+    private function parseStaticItem(): StaticItemNode {
+        $line = $this->expect(Token::STATIC)->line;
+        $mutable = false;
+        if ($this->check(Token::MUT)) {
+            $mutable = true;
+            $this->pos++;
+        }
+        $name = $this->expect(Token::IDENT)->value;
+        $this->expect(Token::COLON);
+        $type = $this->parseType();
+        $this->expect(Token::EQ);
+        $value = $this->parseExpr();
+        $this->expect(Token::SEMICOLON);
+        return new StaticItemNode($name, $type, $value, $mutable, $line);
     }
 
     private function parseModDecl(): ModDeclNode {

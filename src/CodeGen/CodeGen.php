@@ -33,6 +33,8 @@ class CodeGen {
     private array $match_binding_slots  = [];
     private array $if_let_subject_slots = [];
     private array $if_let_binding_slots = [];
+    private array $const_exprs = [];
+    private array $static_offsets = [];
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
@@ -97,6 +99,14 @@ class CodeGen {
 
         $this->registerBuiltinEnumsFromProgram($program);
 
+        foreach ($program->consts as $c) {
+            $this->const_exprs[$c->name] = ['expr' => $c->value, 'type' => $c->type];
+        }
+        foreach ($program->statics as $s) {
+            $offset = $this->emitStaticInit($s);
+            $this->static_offsets[$s->name] = ['offset' => $offset, 'type' => $s->type];
+        }
+
         foreach ($program->functions as $fn) {
             $this->func_sigs[$fn->name] = [
                 'params'      => $fn->params,
@@ -142,6 +152,14 @@ class CodeGen {
 
     private function collectTypesFromProgram(ProgramNode $program): array {
         $types = [];
+        foreach ($program->consts as $c) {
+            $types[$c->type] = true;
+            $this->collectTypesFromExpr($c->value, $types);
+        }
+        foreach ($program->statics as $s) {
+            $types[$s->type] = true;
+            $this->collectTypesFromExpr($s->value, $types);
+        }
         foreach ($program->functions as $fn) {
             if ($fn->return_type !== null) $types[$fn->return_type] = true;
             foreach ($fn->params as $p) { $types[$p['type']] = true; }
@@ -325,6 +343,19 @@ class CodeGen {
         $offset = strlen($this->data);
         $this->data .= $str;
         return $offset;
+    }
+
+    private function addDataQuad(int $value): int {
+        $offset = strlen($this->data);
+        $this->data .= pack('P', $value);
+        return $offset;
+    }
+
+    private function emitStaticInit(StaticItemNode $s): int {
+        if ($s->value instanceof IntLitNode) {
+            return $this->addDataQuad($s->value->value);
+        }
+        throw new RuntimeException("Static '{$s->name}' initializer must be an integer literal on line {$s->line}");
     }
 
     private function generateFunction(FunctionNode $fn, ?string $mangled_name = null, ?string $struct_name = null): void {
