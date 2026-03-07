@@ -820,7 +820,7 @@ class Parser {
             return new DerefNode($operand, $line);
         }
         if ($this->check(Token::AMP)) {
-            $line = $this->current()->line;
+            $tok = $this->current();
             $this->pos++;
             $mutable = false;
             if ($this->check(Token::MUT)) {
@@ -828,7 +828,7 @@ class Parser {
                 $this->pos++;
             }
             $operand = $this->parseUnary();
-            return new BorrowNode($operand, $mutable, $line);
+            return new BorrowNode($operand, $mutable, $tok->line, $tok->column ?? 1);
         }
         return $this->parsePrimary();
     }
@@ -957,7 +957,7 @@ class Parser {
                 $this->expect(Token::RPAREN);
                 $expr = new CallNode($token->value, $args, $token->line);
             } else {
-                $expr = new IdentNode($token->value, $token->line);
+                $expr = new IdentNode($token->value, $token->line, $token->column ?? 1);
             }
 
             while ($this->check(Token::DOT)) {

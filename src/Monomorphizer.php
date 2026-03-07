@@ -471,19 +471,38 @@ class Monomorphizer {
             $ptype = $param['type'];
             $bare  = preg_replace('/^&(mut )?/', '', $ptype);
             $is_ref = ($ptype !== $bare);
+            $arg_expr = $args[$i];
+            if ($is_ref && $arg_expr instanceof BorrowNode) {
+                $arg_expr = $arg_expr->operand;
+            }
+            $concrete = $this->guessExprType($arg_expr);
             if (in_array($bare, $fn->type_params)) {
-                $arg_expr = $args[$i];
-                if ($is_ref && $arg_expr instanceof BorrowNode) {
-                    $arg_expr = $arg_expr->operand;
-                }
-                $concrete = $this->guessExprType($arg_expr);
                 if ($concrete !== null) {
                     $map[$bare] = $concrete;
+                }
+            } elseif ($concrete !== null && str_contains($bare, '<')) {
+                $inner = $this->extractGenericArg($bare);
+                if ($inner !== null) {
+                    $param_names = array_map('trim', explode(',', $inner));
+                    $concrete_args = $this->getConcreteTypeArgs($concrete);
+                    if ($concrete_args !== null && count($concrete_args) === count($param_names)) {
+                        foreach ($param_names as $idx => $pname) {
+                            if (in_array($pname, $fn->type_params)) {
+                                $map[$pname] = $concrete_args[$idx];
+                            }
+                        }
+                    }
                 }
             }
         }
         if (count($map) !== count($fn->type_params)) return null;
         return $map;
+    }
+
+    private function getConcreteTypeArgs(string $concrete): ?array {
+        $parts = explode('__', $concrete);
+        if (count($parts) < 2) return null;
+        return array_slice($parts, 1);
     }
 
     private function guessExprType(mixed $expr): ?string {
@@ -514,7 +533,16 @@ class Monomorphizer {
             if ($expr->op === '!') return 'bool';
             return 'i32';
         }
-        if ($expr instanceof CallNode) return null;
+        if ($expr instanceof CallNode) {
+            $parts = explode('::', $expr->name, 2);
+            if (count($parts) === 2 && isset($this->generic_structs[$parts[0]]) && $parts[1] === 'new' && isset($expr->args[0])) {
+                $arg_type = $this->guessExprType($expr->args[0]);
+                if ($arg_type !== null) {
+                    return $this->mangleStruct($parts[0], [$arg_type]);
+                }
+            }
+            return null;
+        }
         if ($expr instanceof StructLitNode) {
             $name = $expr->struct_name;
             $arg  = $this->extractGenericArg($name);

@@ -12,8 +12,11 @@ class OwnershipChecker {
     private array $const_types = [];
     private array $static_types = [];
 
-    private function atLine(int $line): string {
-        return " at line $line";
+    private function atLocation(int $line, int $column = 1): string {
+        return " at line $line, column $column";
+    }
+    private function loc($node): string {
+        return $this->atLocation($node->line, isset($node->column) ? $node->column : 1);
     }
     private ?string $current_return_type = null;
     private ?string $current_module = null;
@@ -107,7 +110,7 @@ class OwnershipChecker {
             $this->checkExpr($c->value);
             $got = $this->exprType($c->value);
             if ($got !== $c->type && !$this->integerTypesCompatible($c->type, $got)) {
-                throw new RuntimeException("Const '{$c->name}' type mismatch: expected '{$c->type}', got '$got' at line {$c->line}");
+                throw new RuntimeException("Const '{$c->name}' type mismatch: expected '{$c->type}', got '$got'" . $this->loc($c) . "");
             }
             $this->const_types[$c->name] = $c->type;
         }
@@ -115,7 +118,7 @@ class OwnershipChecker {
             $this->checkExpr($s->value);
             $got = $this->exprType($s->value);
             if ($got !== $s->type && !$this->integerTypesCompatible($s->type, $got)) {
-                throw new RuntimeException("Static '{$s->name}' type mismatch: expected '{$s->type}', got '$got' at line {$s->line}");
+                throw new RuntimeException("Static '{$s->name}' type mismatch: expected '{$s->type}', got '$got'" . $this->loc($s) . "");
             }
             $this->static_types[$s->name] = $s->type;
         }
@@ -334,35 +337,35 @@ class OwnershipChecker {
         $target = $stmt->target;
         if ($target instanceof IdentNode) {
             if (!isset($this->vars[$target->name])) {
-                throw new RuntimeException("Undefined variable '{$target->name}' at line {$stmt->line}");
+                throw new RuntimeException("Undefined variable '{$target->name}'" . $this->loc($stmt) . "");
             }
             $var = $this->vars[$target->name];
             if (!$var['mutable']) {
                 throw new RuntimeException(
-                    "Cannot assign to immutable variable '{$target->name}' at line {$stmt->line}"
+                    "Cannot assign to immutable variable '{$target->name}'" . $this->loc($stmt) . ""
                 );
             }
         }
         if ($target instanceof DerefNode && $target->operand instanceof IdentNode) {
             $name = $target->operand->name;
             if (!isset($this->vars[$name])) {
-                throw new RuntimeException("Undefined variable '$name' at line {$stmt->line}");
+                throw new RuntimeException("Undefined variable '$name'" . $this->loc($stmt) . "");
             }
             $t = $this->vars[$name]['type'];
             if (!str_starts_with($t, '&mut ') && !str_starts_with($t, '*mut ')) {
-                throw new RuntimeException("Cannot assign through immutable reference '$name' at line {$stmt->line}");
+                throw new RuntimeException("Cannot assign through immutable reference '$name'" . $this->loc($stmt) . "");
             }
         }
         if ($target instanceof FieldAccessNode && $target->object instanceof IdentNode) {
             $name = $target->object->name;
             if (!isset($this->vars[$name])) {
-                throw new RuntimeException("Undefined variable '$name' at line {$stmt->line}");
+                throw new RuntimeException("Undefined variable '$name'" . $this->loc($stmt) . "");
             }
             $var_type = $this->vars[$name]['type'];
             $is_mut_ref = str_starts_with($var_type, '&mut ');
             if (!$this->vars[$name]['mutable'] && !$is_mut_ref) {
                 throw new RuntimeException(
-                    "Cannot assign to field of immutable variable '$name' at line {$stmt->line}"
+                    "Cannot assign to field of immutable variable '$name'" . $this->loc($stmt) . ""
                 );
             }
         }
@@ -371,7 +374,7 @@ class OwnershipChecker {
         $rhs_type = $this->exprType($stmt->value);
         if ($lhs_type !== $rhs_type && !$this->integerTypesCompatible($lhs_type, $rhs_type)) {
             throw new RuntimeException(
-                "Type mismatch: compound assignment requires compatible types, got '{$lhs_type}' and '{$rhs_type}' at line {$stmt->line}"
+                "Type mismatch: compound assignment requires compatible types, got '{$lhs_type}' and '{$rhs_type}'" . $this->loc($stmt) . ""
             );
         }
     }
@@ -395,12 +398,12 @@ class OwnershipChecker {
                     $ref_inner = str_starts_with($expr_type, '&mut ') ? substr($expr_type, 5) : substr($expr_type, 1);
                     if ($ptr_inner !== $ref_inner) {
                         throw new RuntimeException(
-                            "Type mismatch: cannot cast '$expr_type' to '{$stmt->type_name}' at line {$stmt->line}"
+                            "Type mismatch: cannot cast '$expr_type' to '{$stmt->type_name}'" . $this->loc($stmt) . ""
                         );
                     }
                     if (str_starts_with($stmt->type_name, '*mut ') && !str_starts_with($expr_type, '&mut ')) {
                         throw new RuntimeException(
-                            "Type mismatch: *mut pointer requires &mut reference at line {$stmt->line}"
+                            "Type mismatch: *mut pointer requires &mut reference" . $this->loc($stmt) . ""
                         );
                     }
                 } else {
@@ -408,7 +411,7 @@ class OwnershipChecker {
                     $expr_elements = $this->tupleElementTypes($expr_type);
                     if ($elements === null || $expr_elements === null || $elements != $expr_elements) {
                         throw new RuntimeException(
-                            "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' at line {$stmt->line}"
+                            "Type mismatch: expected '{$stmt->type_name}', got '$expr_type'" . $this->loc($stmt) . ""
                         );
                     }
                 }
@@ -417,7 +420,7 @@ class OwnershipChecker {
             if ($this->isRawPointerType($type) && str_starts_with($type, '*mut ') && $stmt->value instanceof CastNode) {
                 $inner_type = $this->exprType($stmt->value->expr);
                 if (!str_starts_with($inner_type, '&mut ')) {
-                    throw new RuntimeException("*mut pointer requires &mut reference at line {$stmt->line}");
+                    throw new RuntimeException("*mut pointer requires &mut reference" . $this->loc($stmt) . "");
                 }
             }
 
@@ -433,7 +436,7 @@ class OwnershipChecker {
             if (!empty($stmt->bindings)) {
                 $element_types = $this->tupleElementTypes($type);
                 if ($element_types === null || count($element_types) !== count($stmt->bindings)) {
-                    throw new RuntimeException("Tuple destructuring type mismatch at line {$stmt->line}");
+                    throw new RuntimeException("Tuple destructuring type mismatch" . $this->loc($stmt) . "");
                 }
                 foreach ($stmt->bindings as $i => $name) {
                     $this->vars[$name] = [
@@ -463,12 +466,12 @@ class OwnershipChecker {
 
         if ($stmt instanceof AssignNode) {
             if (!isset($this->vars[$stmt->name])) {
-                throw new RuntimeException("Undefined variable '{$stmt->name}' at line {$stmt->line}");
+                throw new RuntimeException("Undefined variable '{$stmt->name}'" . $this->loc($stmt) . "");
             }
             $var = $this->vars[$stmt->name];
             if (!$var['mutable']) {
                 throw new RuntimeException(
-                    "Cannot assign twice to immutable variable '{$stmt->name}' at line {$stmt->line}"
+                    "Cannot assign twice to immutable variable '{$stmt->name}'" . $this->loc($stmt) . ""
                 );
             }
 
@@ -477,7 +480,7 @@ class OwnershipChecker {
             $expr_type = $this->exprType($stmt->value);
             if ($var['type'] !== $expr_type && !$this->integerTypesCompatible($var['type'], $expr_type)) {
                 throw new RuntimeException(
-                    "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}' at line {$stmt->line}"
+                    "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}'" . $this->loc($stmt) . ""
                 );
             }
 
@@ -502,13 +505,13 @@ class OwnershipChecker {
             if ($stmt->object instanceof IdentNode) {
                 $name = $stmt->object->name;
                 if (!isset($this->vars[$name])) {
-                    throw new RuntimeException("Undefined variable '$name' at line {$stmt->line}");
+                    throw new RuntimeException("Undefined variable '$name'" . $this->loc($stmt) . "");
                 }
                 $var_type = $this->vars[$name]['type'];
                 $is_mut_ref = str_starts_with($var_type, '&mut ');
                 if (!$this->vars[$name]['mutable'] && !$is_mut_ref) {
                     throw new RuntimeException(
-                        "Cannot assign to field of immutable variable '$name' at line {$stmt->line}"
+                        "Cannot assign to field of immutable variable '$name'" . $this->loc($stmt) . ""
                     );
                 }
                 $var_type = $this->vars[$name]['type'];
@@ -520,7 +523,7 @@ class OwnershipChecker {
                     if ($sd['module'] !== null && $sd['module'] !== $this->current_module) {
                         foreach ($sd['fields'] as $f) {
                             if ($f['name'] === $stmt->field_name && empty($f['pub'])) {
-                                throw new RuntimeException("Field '{$stmt->field_name}' of struct is private at line {$stmt->line}");
+                                throw new RuntimeException("Field '{$stmt->field_name}' of struct is private" . $this->loc($stmt) . "");
                             }
                         }
                     }
@@ -529,7 +532,7 @@ class OwnershipChecker {
                             $val_type = $this->exprType($stmt->value);
                             if ($val_type !== $f['type'] && !$this->integerTypesCompatible($f['type'], $val_type)) {
                                 throw new RuntimeException(
-                                    "Type mismatch: cannot assign '$val_type' to field '{$stmt->field_name}' of type '{$f['type']}' at line {$stmt->line}"
+                                    "Type mismatch: cannot assign '$val_type' to field '{$stmt->field_name}' of type '{$f['type']}'" . $this->loc($stmt) . ""
                                 );
                             }
                             break;
@@ -546,13 +549,13 @@ class OwnershipChecker {
             if ($stmt->operand instanceof IdentNode) {
                 $name = $stmt->operand->name;
                 if (!isset($this->vars[$name])) {
-                    throw new RuntimeException("Undefined variable '$name' at line {$stmt->line}");
+                    throw new RuntimeException("Undefined variable '$name'" . $this->loc($stmt) . "");
                 }
                 $var = $this->vars[$name];
                 $t = $var['type'];
                 if (!str_starts_with($t, '&mut ') && !str_starts_with($t, '*mut ')) {
                     throw new RuntimeException(
-                        "Cannot assign through immutable reference '$name' at line {$stmt->line}"
+                        "Cannot assign through immutable reference '$name'" . $this->loc($stmt) . ""
                     );
                 }
             }
@@ -561,19 +564,19 @@ class OwnershipChecker {
 
         if ($stmt instanceof AssignNode) {
             if (!isset($this->vars[$stmt->name])) {
-                throw new RuntimeException("Undefined variable '{$stmt->name}' at line {$stmt->line}");
+                throw new RuntimeException("Undefined variable '{$stmt->name}'" . $this->loc($stmt) . "");
             }
             $var = $this->vars[$stmt->name];
             if (!$var['mutable']) {
                 throw new RuntimeException(
-                    "Cannot assign twice to immutable variable '{$stmt->name}' at line {$stmt->line}"
+                    "Cannot assign twice to immutable variable '{$stmt->name}'" . $this->loc($stmt) . ""
                 );
             }
             $this->checkExpr($stmt->value);
             $expr_type = $this->exprType($stmt->value);
             if ($var['type'] !== $expr_type && !$this->integerTypesCompatible($var['type'], $expr_type)) {
                 throw new RuntimeException(
-                    "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}' at line {$stmt->line}"
+                    "Type mismatch: cannot assign '$expr_type' to '{$var['type']}' variable '{$stmt->name}'" . $this->loc($stmt) . ""
                 );
             }
             if ($stmt->value instanceof IdentNode && !$this->isCopy($expr_type)) {
@@ -600,7 +603,7 @@ class OwnershipChecker {
                     $expr_type = $this->exprType($stmt->value);
                     if ($expr_type !== $this->current_return_type && !$this->integerTypesCompatible($this->current_return_type, $expr_type)) {
                         throw new RuntimeException(
-                            "Type mismatch: expected return type '{$this->current_return_type}', got '$expr_type' at line {$stmt->line}"
+                            "Type mismatch: expected return type '{$this->current_return_type}', got '$expr_type'" . $this->loc($stmt) . ""
                         );
                     }
                 }
@@ -638,10 +641,10 @@ class OwnershipChecker {
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
             $enum_type = $stmt->enum_name ?? $base_type;
             if (!isset($this->enum_defs[$enum_type])) {
-                throw new RuntimeException("Cannot match on non-enum type '$enum_type' at line {$stmt->line}");
+                throw new RuntimeException("Cannot match on non-enum type '$enum_type'" . $this->loc($stmt) . "");
             }
             if (!isset($this->enum_defs[$enum_type]['variants'][$stmt->variant_name])) {
-                throw new RuntimeException("Enum '$enum_type' has no variant '{$stmt->variant_name}' at line {$stmt->line}");
+                throw new RuntimeException("Enum '$enum_type' has no variant '{$stmt->variant_name}'" . $this->loc($stmt) . "");
             }
             $saved = $this->vars;
             if ($stmt->binding !== null) {
@@ -683,10 +686,10 @@ class OwnershipChecker {
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
             $enum_type = $stmt->enum_name ?? $base_type;
             if (!isset($this->enum_defs[$enum_type])) {
-                throw new RuntimeException("Cannot match on non-enum type '$enum_type' at line {$stmt->line}");
+                throw new RuntimeException("Cannot match on non-enum type '$enum_type'" . $this->loc($stmt) . "");
             }
             if (!isset($this->enum_defs[$enum_type]['variants'][$stmt->variant_name])) {
-                throw new RuntimeException("Enum '$enum_type' has no variant '{$stmt->variant_name}' at line {$stmt->line}");
+                throw new RuntimeException("Enum '$enum_type' has no variant '{$stmt->variant_name}'" . $this->loc($stmt) . "");
             }
             $saved = $this->vars;
             if ($stmt->binding !== null) {
@@ -723,7 +726,7 @@ class OwnershipChecker {
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
 
             if (!isset($this->enum_defs[$base_type])) {
-                throw new RuntimeException("Cannot match on non-enum type '$base_type' at line {$stmt->line}");
+                throw new RuntimeException("Cannot match on non-enum type '$base_type'" . $this->loc($stmt) . "");
             }
 
             $saved = $this->vars;
@@ -731,7 +734,7 @@ class OwnershipChecker {
                 $this->vars = $saved;
                 if (!$arm->is_wildcard) {
                     if (!isset($this->enum_defs[$base_type]['variants'][$arm->variant_name])) {
-                        throw new RuntimeException("Enum '$base_type' has no variant '{$arm->variant_name}' at line {$arm->line}");
+                        throw new RuntimeException("Enum '$base_type' has no variant '{$arm->variant_name}'" . $this->loc($arm) . "");
                     }
                     if ($arm->binding !== null) {
                         $field_type = $this->enum_defs[$base_type]['variants'][$arm->variant_name]['fields'][0] ?? 'i32';
@@ -782,7 +785,7 @@ class OwnershipChecker {
         if ($expr instanceof IdentNode) {
             if (isset($this->vars[$expr->name]) && $this->vars[$expr->name]['state'] === 'moved') {
                 $v = $this->vars[$expr->name];
-                $msg = "Use of moved value '{$expr->name}' at line {$expr->line}";
+                $msg = "Use of moved value '{$expr->name}'" . $this->loc($expr) . "";
                 if ($v['moved_to'] !== null) {
                     $msg .= " (moved to '{$v['moved_to']}' at line {$v['moved_line']})";
                 }
@@ -800,7 +803,7 @@ class OwnershipChecker {
                 if ($sd['module'] !== null && $sd['module'] !== $this->current_module) {
                     foreach ($sd['fields'] as $f) {
                         if (empty($f['pub'])) {
-                            throw new RuntimeException("Field '{$f['name']}' of struct is private at line {$expr->line}");
+                            throw new RuntimeException("Field '{$f['name']}' of struct is private" . $this->loc($expr) . "");
                         }
                     }
                 }
@@ -813,10 +816,10 @@ class OwnershipChecker {
                 $this->checkExpr($arg);
             }
             if (!isset($this->enum_defs[$expr->enum_name])) {
-                throw new RuntimeException("Undefined enum '{$expr->enum_name}' at line {$expr->line}");
+                throw new RuntimeException("Undefined enum '{$expr->enum_name}'" . $this->loc($expr) . "");
             }
             if (!isset($this->enum_defs[$expr->enum_name]['variants'][$expr->variant_name])) {
-                throw new RuntimeException("Enum '{$expr->enum_name}' has no variant '{$expr->variant_name}' at line {$expr->line}");
+                throw new RuntimeException("Enum '{$expr->enum_name}' has no variant '{$expr->variant_name}'" . $this->loc($expr) . "");
             }
             return;
         }
@@ -837,7 +840,7 @@ class OwnershipChecker {
                 if ($sd['module'] !== null && $sd['module'] !== $this->current_module) {
                     foreach ($sd['fields'] as $f) {
                         if ($f['name'] === $expr->field_name && empty($f['pub'])) {
-                            throw new RuntimeException("Field '{$expr->field_name}' of struct is private at line {$expr->line}");
+                            throw new RuntimeException("Field '{$expr->field_name}' of struct is private" . $this->loc($expr) . "");
                         }
                     }
                 }
@@ -852,7 +855,7 @@ class OwnershipChecker {
                 $name = $inner->name;
                 if (isset($this->vars[$name]) && !$this->vars[$name]['mutable']) {
                     throw new RuntimeException(
-                        "Cannot borrow immutable variable '$name' as mutable at line {$expr->line}"
+                        "Cannot borrow immutable variable '$name' as mutable" . $this->loc($expr) . ""
                     );
                 }
             }
@@ -901,7 +904,7 @@ class OwnershipChecker {
                 $got = count($expr->args);
                 if ($got !== $expected) {
                     throw new RuntimeException(
-                        "Function '{$expr->name}' expects $expected arguments, got $got at line {$expr->line}"
+                        "Function '{$expr->name}' expects $expected arguments, got $got" . $this->loc($expr) . ""
                     );
                 }
                 foreach ($expr->args as $i => $arg) {
@@ -909,7 +912,7 @@ class OwnershipChecker {
                     $param_type = $sig['params'][$i]['type'];
                     if ($arg_type !== $param_type && !$this->integerTypesCompatible($param_type, $arg_type)) {
                         throw new RuntimeException(
-                            "Type mismatch: argument " . ($i + 1) . " of '{$expr->name}' expects '$param_type', got '$arg_type' at line {$expr->line}"
+                            "Type mismatch: argument " . ($i + 1) . " of '{$expr->name}' expects '$param_type', got '$arg_type'" . $this->loc($expr) . ""
                         );
                     }
                 }
@@ -930,14 +933,14 @@ class OwnershipChecker {
 
             $mangled = "$base_type::{$expr->method_name}";
             if (!isset($this->func_sigs[$mangled])) {
-                throw new RuntimeException("Method '{$expr->method_name}' not found for type '$base_type' at line {$expr->line}");
+                throw new RuntimeException("Method '{$expr->method_name}' not found for type '$base_type'" . $this->loc($expr) . "");
             }
 
             $sig = $this->func_sigs[$mangled];
             $expected = count($sig['params']) - 1;
             $got = count($expr->args);
             if ($got !== $expected) {
-                throw new RuntimeException("Method '{$expr->method_name}' expects $expected arguments, got $got at line {$expr->line}");
+                throw new RuntimeException("Method '{$expr->method_name}' expects $expected arguments, got $got" . $this->loc($expr) . "");
             }
 
             $self_param_type = str_replace('self', $base_type, $sig['params'][0]['type']);
@@ -948,7 +951,7 @@ class OwnershipChecker {
                 } elseif ($self_param_type === "&mut $base_type" && $receiver_type === $base_type) {
                      // okay, auto-borrow-mut
                 } else {
-                    throw new RuntimeException("Method '{$expr->method_name}' expects receiver '$self_param_type', got '$receiver_type' at line {$expr->line}");
+                    throw new RuntimeException("Method '{$expr->method_name}' expects receiver '$self_param_type', got '$receiver_type'" . $this->loc($expr) . "");
                 }
             }
 
@@ -956,7 +959,7 @@ class OwnershipChecker {
                 $arg_type = $this->exprType($arg);
                 $param_type = str_replace('self', $base_type, $sig['params'][$i + 1]['type']);
                 if ($arg_type !== $param_type && !$this->integerTypesCompatible($param_type, $arg_type)) {
-                    throw new RuntimeException("Type mismatch: argument " . ($i + 1) . " of '{$expr->method_name}' expects '$param_type', got '$arg_type' at line {$expr->line}");
+                    throw new RuntimeException("Type mismatch: argument " . ($i + 1) . " of '{$expr->method_name}' expects '$param_type', got '$arg_type'" . $this->loc($expr) . "");
                 }
             }
 

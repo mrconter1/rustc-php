@@ -168,10 +168,12 @@ class FieldAccessNode {
     public mixed  $object;
     public string $field_name;
     public int    $line;
-    public function __construct(mixed $object, string $field_name, int $line) {
+    public int    $column;
+    public function __construct(mixed $object, string $field_name, int $line, int $column = 1) {
         $this->object     = $object;
         $this->field_name = $field_name;
         $this->line       = $line;
+        $this->column     = $column;
     }
 }
 
@@ -226,15 +228,17 @@ class LetNode {
     public mixed   $value;
     public bool    $mutable;
     public int     $line;
+    public int     $column;
     /** @var list<string> tuple destructuring binding names, empty for single binding */
     public array   $bindings;
-    public function __construct(string $name, ?string $type_name, mixed $value, bool $mutable, int $line, array $bindings = []) {
+    public function __construct(string $name, ?string $type_name, mixed $value, bool $mutable, int $line, array $bindings = [], int $column = 1) {
         $this->name      = $name;
         $this->type_name = $type_name;
         $this->value     = $value;
         $this->mutable   = $mutable;
         $this->line      = $line;
         $this->bindings  = $bindings;
+        $this->column    = $column;
     }
 }
 
@@ -242,10 +246,12 @@ class AssignNode {
     public string $name;
     public mixed  $value;
     public int    $line;
-    public function __construct(string $name, mixed $value, int $line) {
-        $this->name  = $name;
-        $this->value = $value;
-        $this->line  = $line;
+    public int    $column;
+    public function __construct(string $name, mixed $value, int $line, int $column = 1) {
+        $this->name   = $name;
+        $this->value  = $value;
+        $this->line   = $line;
+        $this->column = $column;
     }
 }
 
@@ -440,9 +446,11 @@ class TupleIndexNode {
 class IdentNode {
     public string $name;
     public int    $line;
-    public function __construct(string $name, int $line) {
-        $this->name = $name;
-        $this->line = $line;
+    public int    $column;
+    public function __construct(string $name, int $line, int $column = 1) {
+        $this->name   = $name;
+        $this->line   = $line;
+        $this->column = $column;
     }
 }
 
@@ -450,10 +458,12 @@ class BorrowNode {
     public mixed $operand;
     public bool  $mutable;
     public int   $line;
-    public function __construct(mixed $operand, bool $mutable, int $line) {
+    public int   $column;
+    public function __construct(mixed $operand, bool $mutable, int $line, int $column = 1) {
         $this->operand = $operand;
         $this->mutable = $mutable;
         $this->line    = $line;
+        $this->column  = $column;
     }
 }
 

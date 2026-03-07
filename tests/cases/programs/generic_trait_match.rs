@@ -26,7 +26,7 @@ impl Double for i32 {
     }
 }
 
-fn double_or_zero(b: &Box<i32>) -> i32 {
+fn double_or_zero<T: Double>(b: &Box<T>) -> i32 {
     let x = b.get();
     x.double()
 }

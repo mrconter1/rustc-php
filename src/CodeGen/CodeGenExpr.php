@@ -189,7 +189,7 @@ trait CodeGenExpr {
             if ($expr->operand instanceof DerefNode && $expr->operand->operand instanceof IdentNode) {
                 $name = $expr->operand->operand->name;
                 if (!isset($this->vars[$name])) {
-                    throw new RuntimeException("Undefined variable '$name' at line {$expr->line}");
+                    throw new RuntimeException("Undefined variable '$name' at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
                 }
                 $var = $this->vars[$name];
                 if ($var['type'] === 'String') {
@@ -204,12 +204,28 @@ trait CodeGenExpr {
                     return;
                 }
             }
+            if ($expr->operand instanceof FieldAccessNode && $expr->operand->object instanceof IdentNode) {
+                $name = $expr->operand->object->name;
+                if (!isset($this->vars[$name])) {
+                    throw new RuntimeException("Undefined variable '$name' at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
+                }
+                $var = $this->vars[$name];
+                $base_type = $var['type'];
+                if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+                elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+                $sd = $this->struct_defs[$base_type] ?? null;
+                if ($sd !== null && isset($sd['field_offsets'][$expr->operand->field_name])) {
+                    $field_off = $sd['field_offsets'][$expr->operand->field_name];
+                    $this->asm->lea(X86::RAX, X86::RBP, -($var['offset'] - $field_off));
+                    return;
+                }
+            }
             if (!($expr->operand instanceof IdentNode)) {
-                throw new RuntimeException("Can only borrow variables at line {$expr->line}");
+                throw new RuntimeException("Can only borrow variables at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
             }
             $name = $expr->operand->name;
             if (!isset($this->vars[$name])) {
-                throw new RuntimeException("Undefined variable '$name' at line {$expr->line}");
+                throw new RuntimeException("Undefined variable '$name' at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
             }
             $var = $this->vars[$name];
             $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
