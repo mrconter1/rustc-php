@@ -100,8 +100,18 @@ trait CodeGenStmt {
             return;
         }
 
+        if ($stmt instanceof IfLetNode) {
+            $this->generateIfLet($stmt);
+            return;
+        }
+
         if ($stmt instanceof WhileNode) {
             $this->generateWhile($stmt);
+            return;
+        }
+
+        if ($stmt instanceof WhileLetNode) {
+            $this->generateWhileLet($stmt);
             return;
         }
 
@@ -320,6 +330,83 @@ trait CodeGenStmt {
         $after_loop = $this->asm->pos();
         $this->asm->patch32($jz_patch, $after_loop - $jz_patch - 4);
 
+        $ctx = array_pop($this->loop_stack);
+        foreach ($ctx['break_patches'] as $patch_pos) {
+            $this->asm->patch32($patch_pos, $after_loop - $patch_pos - 4);
+        }
+    }
+
+    private function generateIfLet(IfLetNode $node): void {
+        $subject_slot = $this->if_let_subject_slots[spl_object_id($node)];
+        $enum_type = $subject_slot['enum_type'];
+        $discriminant = $this->enum_defs[$enum_type]['variants'][$node->variant_name]['discriminant'];
+
+        $this->generateExpr($node->subject);
+        $this->asm->store(X86::RBP, -$subject_slot['offset'], X86::RAX);
+        if ($subject_slot['has_payload']) {
+            $this->asm->store(X86::RBP, -($subject_slot['offset'] - 8), X86::RDX);
+        }
+        $this->asm->load(X86::RAX, X86::RBP, -$subject_slot['offset']);
+        $this->asm->mov_imm32(X86::RCX, $discriminant);
+        $this->asm->cmp(X86::RAX, X86::RCX);
+        $jne_else = $this->asm->jne_rel32();
+
+        if ($node->binding !== null) {
+            $binding_slot = $this->if_let_binding_slots[spl_object_id($node)];
+            $this->asm->load(X86::RCX, X86::RBP, -($subject_slot['offset'] - 8));
+            $this->asm->store(X86::RBP, -$binding_slot['offset'], X86::RCX);
+            $field_type = $this->enum_defs[$enum_type]['variants'][$node->variant_name]['fields'][0] ?? 'i32';
+            $this->vars[$node->binding] = ['offset' => $binding_slot['offset'], 'type' => $field_type];
+        }
+        $this->generateBody($node->then_body);
+        if ($node->binding !== null) {
+            unset($this->vars[$node->binding]);
+        }
+
+        $jmp_end = $node->else_body !== null ? $this->asm->jmp_rel32() : null;
+        $else_pos = $this->asm->pos();
+        $this->asm->patch32($jne_else, $else_pos - $jne_else - 4);
+
+        if ($node->else_body !== null) {
+            $this->generateBody($node->else_body);
+            $end_pos = $this->asm->pos();
+            $this->asm->patch32($jmp_end, $end_pos - $jmp_end - 4);
+        }
+    }
+
+    private function generateWhileLet(WhileLetNode $node): void {
+        $subject_slot = $this->if_let_subject_slots[spl_object_id($node)];
+        $enum_type = $subject_slot['enum_type'];
+        $discriminant = $this->enum_defs[$enum_type]['variants'][$node->variant_name]['discriminant'];
+
+        $loop_top = $this->asm->pos();
+        $this->loop_stack[] = ['continue_target' => $loop_top, 'break_patches' => []];
+
+        $this->generateExpr($node->subject);
+        $this->asm->store(X86::RBP, -$subject_slot['offset'], X86::RAX);
+        if ($subject_slot['has_payload']) {
+            $this->asm->store(X86::RBP, -($subject_slot['offset'] - 8), X86::RDX);
+        }
+        $this->asm->load(X86::RAX, X86::RBP, -$subject_slot['offset']);
+        $this->asm->mov_imm32(X86::RCX, $discriminant);
+        $this->asm->cmp(X86::RAX, X86::RCX);
+        $jne_after = $this->asm->jne_rel32();
+
+        if ($node->binding !== null) {
+            $binding_slot = $this->if_let_binding_slots[spl_object_id($node)];
+            $this->asm->load(X86::RCX, X86::RBP, -($subject_slot['offset'] - 8));
+            $this->asm->store(X86::RBP, -$binding_slot['offset'], X86::RCX);
+            $field_type = $this->enum_defs[$enum_type]['variants'][$node->variant_name]['fields'][0] ?? 'i32';
+            $this->vars[$node->binding] = ['offset' => $binding_slot['offset'], 'type' => $field_type];
+        }
+        $this->generateBody($node->body);
+        if ($node->binding !== null) {
+            unset($this->vars[$node->binding]);
+        }
+        $this->asm->jmp_to($loop_top);
+
+        $after_loop = $this->asm->pos();
+        $this->asm->patch32($jne_after, $after_loop - $jne_after - 4);
         $ctx = array_pop($this->loop_stack);
         foreach ($ctx['break_patches'] as $patch_pos) {
             $this->asm->patch32($patch_pos, $after_loop - $patch_pos - 4);

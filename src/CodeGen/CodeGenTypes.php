@@ -131,6 +131,21 @@ trait CodeGenTypes {
             }
             return 'i32';
         }
+        if ($expr instanceof IfLetNode) {
+            if (!empty($expr->then_body)) {
+                $last = end($expr->then_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->exprType($last->value);
+                }
+            }
+            if ($expr->else_body !== null && !empty($expr->else_body)) {
+                $last = end($expr->else_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->exprType($last->value);
+                }
+            }
+            return 'i32';
+        }
         if ($expr instanceof CallNode) {
             if (isset($this->func_sigs[$expr->name])) {
                 return $this->func_sigs[$expr->name]['return_type'] ?? 'i32';

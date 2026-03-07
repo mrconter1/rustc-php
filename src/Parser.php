@@ -376,10 +376,20 @@ class Parser {
             return $this->parseLet();
         }
         if ($this->check(Token::IF)) {
-            return $this->parseIf();
+            $line = $this->expect(Token::IF)->line;
+            if ($this->check(Token::LET)) {
+                $this->pos++;
+                return $this->parseIfLet($line);
+            }
+            return $this->parseIf($line);
         }
         if ($this->check(Token::WHILE)) {
-            return $this->parseWhile();
+            $line = $this->expect(Token::WHILE)->line;
+            if ($this->check(Token::LET)) {
+                $this->pos++;
+                return $this->parseWhileLet($line);
+            }
+            return $this->parseWhile($line);
         }
         if ($this->check(Token::LOOP)) {
             $line = $this->expect(Token::LOOP)->line;
@@ -561,8 +571,7 @@ class Parser {
         return new LetNode($name, $type_name, $value, $mutable, $line, $bindings);
     }
 
-    private function parseIf(): IfNode {
-        $line = $this->expect(Token::IF)->line;
+    private function parseIf(int $line): IfNode {
         $condition = $this->parseExpr();
         $then_body = $this->parseBlock();
 
@@ -570,20 +579,81 @@ class Parser {
         if ($this->check(Token::ELSE)) {
             $this->pos++;
             if ($this->check(Token::IF)) {
-                $else_body = [$this->parseIf()];
+                $if_line = $this->expect(Token::IF)->line;
+                if ($this->check(Token::LET)) {
+                    $this->pos++;
+                    $else_body = [$this->parseIfLet($if_line)];
+                } else {
+                    $else_body = [$this->parseIf($if_line)];
+                }
             } else {
                 $else_body = $this->parseBlock();
             }
         }
-
         return new IfNode($condition, $then_body, $else_body, $line);
     }
 
-    private function parseWhile(): WhileNode {
-        $line = $this->expect(Token::WHILE)->line;
+    private function parseLetPattern(): array {
+        $first = $this->expect(Token::IDENT)->value;
+        $enum_name = null;
+        $variant_name = '';
+        if ($this->check(Token::DCOLON)) {
+            $this->pos++;
+            if (($first === 'Option' || $first === 'Result') && $this->check(Token::LT)) {
+                $enum_name = $this->tryParseBuiltinEnumType($first);
+                $this->expect(Token::DCOLON);
+                $variant_name = $this->expect(Token::IDENT)->value;
+            } else {
+                $enum_name = $first;
+                $variant_name = $this->expect(Token::IDENT)->value;
+            }
+        } else {
+            $variant_name = $first;
+        }
+        $binding = null;
+        if ($this->check(Token::LPAREN)) {
+            $this->pos++;
+            $binding = $this->expect(Token::IDENT)->value;
+            $this->expect(Token::RPAREN);
+        }
+        return [$enum_name, $variant_name, $binding];
+    }
+
+    private function parseIfLet(int $line): IfLetNode {
+        [$enum_name, $variant_name, $binding] = $this->parseLetPattern();
+        $this->expect(Token::EQ);
+        $subject = $this->parseExpr();
+        $then_body = $this->parseBlock();
+        $else_body = null;
+        if ($this->check(Token::ELSE)) {
+            $this->pos++;
+            if ($this->check(Token::IF)) {
+                $if_line = $this->expect(Token::IF)->line;
+                if ($this->check(Token::LET)) {
+                    $this->pos++;
+                    $else_body = [$this->parseIfLet($if_line)];
+                } else {
+                    $else_body = [$this->parseIf($if_line)];
+                }
+            } else {
+                $else_body = $this->parseBlock();
+            }
+        }
+        return new IfLetNode($subject, $enum_name, $variant_name, $binding, $then_body, $else_body, $line);
+    }
+
+    private function parseWhile(int $line): WhileNode {
         $condition = $this->parseExpr();
         $body = $this->parseBlock();
         return new WhileNode($condition, $body, $line);
+    }
+
+    private function parseWhileLet(int $line): WhileLetNode {
+        [$enum_name, $variant_name, $binding] = $this->parseLetPattern();
+        $this->expect(Token::EQ);
+        $subject = $this->parseExpr();
+        $body = $this->parseBlock();
+        return new WhileLetNode($subject, $enum_name, $variant_name, $binding, $body, $line);
     }
 
     private function parseStructLiteral(string $name, int $line): StructLitNode {
@@ -889,7 +959,13 @@ class Parser {
         }
 
         if ($token->type === Token::IF) {
-            return $this->parseIf();
+            $line = $token->line;
+            $this->pos++;
+            if ($this->check(Token::LET)) {
+                $this->pos++;
+                return $this->parseIfLet($line);
+            }
+            return $this->parseIf($line);
         }
 
         if ($token->type === Token::PIPE) {

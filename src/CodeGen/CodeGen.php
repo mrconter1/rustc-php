@@ -31,6 +31,8 @@ class CodeGen {
     private array $loop_stack = [];
     private array $match_subject_slots = [];
     private array $match_binding_slots  = [];
+    private array $if_let_subject_slots = [];
+    private array $if_let_binding_slots = [];
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
@@ -180,8 +182,19 @@ class CodeGen {
                 $this->collectTypesFromStmts($stmt->then_body, $types);
                 if ($stmt->else_body !== null) $this->collectTypesFromStmts($stmt->else_body, $types);
             }
+            if ($stmt instanceof IfLetNode) {
+                $this->collectTypesFromExpr($stmt->subject, $types);
+                if ($stmt->enum_name !== null) $types[$stmt->enum_name] = true;
+                $this->collectTypesFromStmts($stmt->then_body, $types);
+                if ($stmt->else_body !== null) $this->collectTypesFromStmts($stmt->else_body, $types);
+            }
             if ($stmt instanceof WhileNode) {
                 $this->collectTypesFromExpr($stmt->condition, $types);
+                $this->collectTypesFromStmts($stmt->body, $types);
+            }
+            if ($stmt instanceof WhileLetNode) {
+                $this->collectTypesFromExpr($stmt->subject, $types);
+                if ($stmt->enum_name !== null) $types[$stmt->enum_name] = true;
                 $this->collectTypesFromStmts($stmt->body, $types);
             }
             if ($stmt instanceof LoopNode) $this->collectTypesFromStmts($stmt->body, $types);
@@ -230,6 +243,12 @@ class CodeGen {
         }
         if ($expr instanceof IfNode) {
             $this->collectTypesFromExpr($expr->condition, $types);
+            $this->collectTypesFromStmts($expr->then_body, $types);
+            if ($expr->else_body !== null) $this->collectTypesFromStmts($expr->else_body, $types);
+        }
+        if ($expr instanceof IfLetNode) {
+            $this->collectTypesFromExpr($expr->subject, $types);
+            if ($expr->enum_name !== null) $types[$expr->enum_name] = true;
             $this->collectTypesFromStmts($expr->then_body, $types);
             if ($expr->else_body !== null) $this->collectTypesFromStmts($expr->else_body, $types);
         }
@@ -414,8 +433,14 @@ class CodeGen {
                     $this->collectVars($stmt->else_body);
                 }
             }
+            if ($stmt instanceof IfLetNode) {
+                $this->registerIfLetSlot($stmt);
+            }
             if ($stmt instanceof WhileNode) {
                 $this->collectVars($stmt->body);
+            }
+            if ($stmt instanceof WhileLetNode) {
+                $this->registerWhileLetSlot($stmt);
             }
             if ($stmt instanceof LoopNode) {
                 $this->collectVars($stmt->body);
@@ -448,6 +473,41 @@ class CodeGen {
             }
             $this->collectVars($arm->body);
         }
+    }
+
+    private function registerIfLetSlot(IfLetNode $stmt): void {
+        $enum_type = $stmt->enum_name ?? $this->exprType($stmt->subject);
+        $has_payload = isset($this->enum_defs[$enum_type]) && $this->enum_defs[$enum_type]['has_payload'];
+        $this->stack_size += 16;
+        $this->if_let_subject_slots[spl_object_id($stmt)] = [
+            'offset'      => $this->stack_size,
+            'has_payload' => $has_payload,
+            'enum_type'   => $enum_type,
+        ];
+        if ($stmt->binding !== null) {
+            $this->stack_size += 8;
+            $this->if_let_binding_slots[spl_object_id($stmt)] = ['offset' => $this->stack_size];
+        }
+        $this->collectVars($stmt->then_body);
+        if ($stmt->else_body !== null) {
+            $this->collectVars($stmt->else_body);
+        }
+    }
+
+    private function registerWhileLetSlot(WhileLetNode $stmt): void {
+        $enum_type = $stmt->enum_name ?? $this->exprType($stmt->subject);
+        $has_payload = isset($this->enum_defs[$enum_type]) && $this->enum_defs[$enum_type]['has_payload'];
+        $this->stack_size += 16;
+        $this->if_let_subject_slots[spl_object_id($stmt)] = [
+            'offset'      => $this->stack_size,
+            'has_payload' => $has_payload,
+            'enum_type'   => $enum_type,
+        ];
+        if ($stmt->binding !== null) {
+            $this->stack_size += 8;
+            $this->if_let_binding_slots[spl_object_id($stmt)] = ['offset' => $this->stack_size];
+        }
+        $this->collectVars($stmt->body);
     }
 
     private function collectMatchSlotsFromExpr(mixed $expr): void {
@@ -499,6 +559,12 @@ class CodeGen {
                 $this->collectMatchSlotsFromStmts($expr->else_body);
             }
         }
+        if ($expr instanceof IfLetNode) {
+            if (!isset($this->if_let_subject_slots[spl_object_id($expr)])) {
+                $this->registerIfLetSlot($expr);
+            }
+            return;
+        }
     }
 
     private function collectMatchSlotsFromStmts(array $stmts): void {
@@ -513,7 +579,22 @@ class CodeGen {
                 if ($stmt->else_body !== null) $this->collectMatchSlotsFromStmts($stmt->else_body);
             }
             if ($stmt instanceof WhileNode) $this->collectMatchSlotsFromStmts($stmt->body);
+            if ($stmt instanceof WhileLetNode) {
+                if (!isset($this->if_let_subject_slots[spl_object_id($stmt)])) {
+                    $this->registerWhileLetSlot($stmt);
+                } else {
+                    $this->collectMatchSlotsFromStmts($stmt->body);
+                }
+            }
             if ($stmt instanceof LoopNode) $this->collectMatchSlotsFromStmts($stmt->body);
+            if ($stmt instanceof IfLetNode) {
+                if (!isset($this->if_let_subject_slots[spl_object_id($stmt)])) {
+                    $this->registerIfLetSlot($stmt);
+                } else {
+                    $this->collectMatchSlotsFromStmts($stmt->then_body);
+                    if ($stmt->else_body !== null) $this->collectMatchSlotsFromStmts($stmt->else_body);
+                }
+            }
             if ($stmt instanceof MatchNode) {
                 if (!isset($this->match_subject_slots[spl_object_id($stmt)])) {
                     $this->registerMatchSlot($stmt);

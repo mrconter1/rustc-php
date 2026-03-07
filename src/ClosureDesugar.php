@@ -142,6 +142,37 @@ class ClosureDesugar {
             );
         }
 
+        if ($stmt instanceof IfLetNode) {
+            $sc1 = $scope; $cv1 = $closure_vars;
+            $then_body = $this->rewriteBody($stmt->then_body, $sc1, $cv1);
+            $else_body = null;
+            if ($stmt->else_body !== null) {
+                $sc2 = $scope; $cv2 = $closure_vars;
+                $else_body = $this->rewriteBody($stmt->else_body, $sc2, $cv2);
+            }
+            return new IfLetNode(
+                $this->rewriteExpr($stmt->subject, $scope, $closure_vars),
+                $stmt->enum_name,
+                $stmt->variant_name,
+                $stmt->binding,
+                $then_body,
+                $else_body,
+                $stmt->line
+            );
+        }
+
+        if ($stmt instanceof WhileLetNode) {
+            $sc = $scope; $cv = $closure_vars;
+            return new WhileLetNode(
+                $this->rewriteExpr($stmt->subject, $scope, $closure_vars),
+                $stmt->enum_name,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBody($stmt->body, $sc, $cv),
+                $stmt->line
+            );
+        }
+
         if ($stmt instanceof LoopNode) {
             $sc = $scope; $cv = $closure_vars;
             return new LoopNode($this->rewriteBody($stmt->body, $sc, $cv), $stmt->line);
@@ -253,6 +284,25 @@ class ClosureDesugar {
             );
         }
 
+        if ($expr instanceof IfLetNode) {
+            $sc1 = $scope; $cv1 = $closure_vars;
+            $then_body = $this->rewriteBody($expr->then_body, $sc1, $cv1);
+            $else_body = null;
+            if ($expr->else_body !== null) {
+                $sc2 = $scope; $cv2 = $closure_vars;
+                $else_body = $this->rewriteBody($expr->else_body, $sc2, $cv2);
+            }
+            return new IfLetNode(
+                $this->rewriteExpr($expr->subject, $scope, $closure_vars),
+                $expr->enum_name,
+                $expr->variant_name,
+                $expr->binding,
+                $then_body,
+                $else_body,
+                $expr->line
+            );
+        }
+
         if ($expr instanceof MatchNode) {
             return $this->rewriteStmt($expr, $scope, $closure_vars);
         }
@@ -361,6 +411,20 @@ class ClosureDesugar {
             $this->scanExprFree($stmt->condition, $local, $free);
             $lc = $local;
             foreach ($stmt->body as $s) { $this->scanStmtFree($s, $lc, $free); if ($s instanceof LetNode) $lc[] = $s->name; }
+        } elseif ($stmt instanceof IfLetNode) {
+            $this->scanExprFree($stmt->subject, $local, $free);
+            $lc = $local;
+            if ($stmt->binding !== null) $lc[] = $stmt->binding;
+            foreach ($stmt->then_body as $s) { $this->scanStmtFree($s, $lc, $free); if ($s instanceof LetNode) $lc[] = $s->name; }
+            if ($stmt->else_body) {
+                $lc2 = $local;
+                foreach ($stmt->else_body as $s) { $this->scanStmtFree($s, $lc2, $free); if ($s instanceof LetNode) $lc2[] = $s->name; }
+            }
+        } elseif ($stmt instanceof WhileLetNode) {
+            $this->scanExprFree($stmt->subject, $local, $free);
+            $lc = $local;
+            if ($stmt->binding !== null) $lc[] = $stmt->binding;
+            foreach ($stmt->body as $s) { $this->scanStmtFree($s, $lc, $free); if ($s instanceof LetNode) $lc[] = $s->name; }
         } elseif ($stmt instanceof LoopNode) {
             $lc = $local;
             foreach ($stmt->body as $s) { $this->scanStmtFree($s, $lc, $free); if ($s instanceof LetNode) $lc[] = $s->name; }
@@ -399,6 +463,15 @@ class ClosureDesugar {
         } elseif ($expr instanceof IfNode) {
             $this->scanExprFree($expr->condition, $local, $free);
             $lc = $local;
+            foreach ($expr->then_body as $s) { $this->scanStmtFree($s, $lc, $free); if ($s instanceof LetNode) $lc[] = $s->name; }
+            if ($expr->else_body) {
+                $lc2 = $local;
+                foreach ($expr->else_body as $s) { $this->scanStmtFree($s, $lc2, $free); if ($s instanceof LetNode) $lc2[] = $s->name; }
+            }
+        } elseif ($expr instanceof IfLetNode) {
+            $this->scanExprFree($expr->subject, $local, $free);
+            $lc = $local;
+            if ($expr->binding !== null) $lc[] = $expr->binding;
             foreach ($expr->then_body as $s) { $this->scanStmtFree($s, $lc, $free); if ($s instanceof LetNode) $lc[] = $s->name; }
             if ($expr->else_body) {
                 $lc2 = $local;
@@ -461,6 +534,27 @@ class ClosureDesugar {
         if ($stmt instanceof WhileNode) {
             return new WhileNode(
                 $this->rewriteClosureExpr($stmt->condition, $captures, $lb),
+                $this->rewriteClosureBody($stmt->body, $captures, $lb),
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof IfLetNode) {
+            return new IfLetNode(
+                $this->rewriteClosureExpr($stmt->subject, $captures, $lb),
+                $stmt->enum_name,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteClosureBody($stmt->then_body, $captures, $lb),
+                $stmt->else_body !== null ? $this->rewriteClosureBody($stmt->else_body, $captures, $lb) : null,
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof WhileLetNode) {
+            return new WhileLetNode(
+                $this->rewriteClosureExpr($stmt->subject, $captures, $lb),
+                $stmt->enum_name,
+                $stmt->variant_name,
+                $stmt->binding,
                 $this->rewriteClosureBody($stmt->body, $captures, $lb),
                 $stmt->line
             );
@@ -535,6 +629,17 @@ class ClosureDesugar {
                 $expr->line
             );
         }
+        if ($expr instanceof IfLetNode) {
+            return new IfLetNode(
+                $this->rewriteClosureExpr($expr->subject, $captures, $lb),
+                $expr->enum_name,
+                $expr->variant_name,
+                $expr->binding,
+                $this->rewriteClosureBody($expr->then_body, $captures, $lb),
+                $expr->else_body !== null ? $this->rewriteClosureBody($expr->else_body, $captures, $lb) : null,
+                $expr->line
+            );
+        }
         return $expr;
     }
 
@@ -563,6 +668,15 @@ class ClosureDesugar {
         }
         if ($expr instanceof UnaryOpNode) return $expr->op === '!' ? 'bool' : 'i32';
         if ($expr instanceof IfNode) {
+            if (!empty($expr->then_body)) {
+                $last = end($expr->then_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->inferExprType($last->value, $scope);
+                }
+            }
+            return 'i32';
+        }
+        if ($expr instanceof IfLetNode) {
             if (!empty($expr->then_body)) {
                 $last = end($expr->then_body);
                 if ($last instanceof ReturnNode && $last->value !== null) {

@@ -285,8 +285,15 @@ class Monomorphizer {
             $this->scanExpr($stmt->condition);
             $this->scanBody($stmt->then_body);
             if ($stmt->else_body !== null) $this->scanBody($stmt->else_body);
+        } elseif ($stmt instanceof IfLetNode) {
+            $this->scanExpr($stmt->subject);
+            $this->scanBody($stmt->then_body);
+            if ($stmt->else_body !== null) $this->scanBody($stmt->else_body);
         } elseif ($stmt instanceof WhileNode) {
             $this->scanExpr($stmt->condition);
+            $this->scanBody($stmt->body);
+        } elseif ($stmt instanceof WhileLetNode) {
+            $this->scanExpr($stmt->subject);
             $this->scanBody($stmt->body);
         } elseif ($stmt instanceof LoopNode) {
             $this->scanBody($stmt->body);
@@ -371,6 +378,8 @@ class Monomorphizer {
             $this->scanExpr($expr->object);
             $this->scanExpr($expr->index);
         } elseif ($expr instanceof IfNode) {
+            $this->scanStmt($expr);
+        } elseif ($expr instanceof IfLetNode) {
             $this->scanStmt($expr);
         } elseif ($expr instanceof MatchNode) {
             $this->scanStmt($expr);
@@ -686,6 +695,29 @@ class Monomorphizer {
                 $stmt->line
             );
         }
+        if ($stmt instanceof IfLetNode) {
+            $en = $stmt->enum_name !== null ? $this->substituteType($stmt->enum_name, $map) : null;
+            return new IfLetNode(
+                $this->substituteExpr($stmt->subject, $map),
+                $en,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->substituteBody($stmt->then_body, $map),
+                $stmt->else_body !== null ? $this->substituteBody($stmt->else_body, $map) : null,
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof WhileLetNode) {
+            $en = $stmt->enum_name !== null ? $this->substituteType($stmt->enum_name, $map) : null;
+            return new WhileLetNode(
+                $this->substituteExpr($stmt->subject, $map),
+                $en,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->substituteBody($stmt->body, $map),
+                $stmt->line
+            );
+        }
         if ($stmt instanceof LoopNode) {
             return new LoopNode($this->substituteBody($stmt->body, $map), $stmt->line);
         }
@@ -775,6 +807,9 @@ class Monomorphizer {
         if ($expr instanceof IfNode) {
             return $this->substituteStmt($expr, $map);
         }
+        if ($expr instanceof IfLetNode) {
+            return $this->substituteStmt($expr, $map);
+        }
         if ($expr instanceof MatchNode) {
             return $this->substituteStmt($expr, $map);
         }
@@ -858,6 +893,29 @@ class Monomorphizer {
             return new WhileNode(
                 $this->rewriteExpr($stmt->condition),
                 $this->rewriteBody($stmt->body), $stmt->line
+            );
+        }
+        if ($stmt instanceof IfLetNode) {
+            $en = $stmt->enum_name !== null ? $this->rewriteTypeName($stmt->enum_name) : null;
+            return new IfLetNode(
+                $this->rewriteExpr($stmt->subject),
+                $en,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBody($stmt->then_body),
+                $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body) : null,
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof WhileLetNode) {
+            $en = $stmt->enum_name !== null ? $this->rewriteTypeName($stmt->enum_name) : null;
+            return new WhileLetNode(
+                $this->rewriteExpr($stmt->subject),
+                $en,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBody($stmt->body),
+                $stmt->line
             );
         }
         if ($stmt instanceof LoopNode) {
@@ -974,6 +1032,9 @@ class Monomorphizer {
             return new IndexNode($this->rewriteExpr($expr->object), $this->rewriteExpr($expr->index), $expr->line);
         }
         if ($expr instanceof IfNode) {
+            return $this->rewriteStmt($expr);
+        }
+        if ($expr instanceof IfLetNode) {
             return $this->rewriteStmt($expr);
         }
         if ($expr instanceof MatchNode) {

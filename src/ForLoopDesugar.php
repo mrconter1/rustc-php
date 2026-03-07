@@ -112,8 +112,16 @@ class ForLoopDesugar {
             $else_body = $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body) : null;
             return new IfNode($stmt->condition, $then_body, $else_body, $stmt->line);
         }
+        if ($stmt instanceof IfLetNode) {
+            $then_body = $this->rewriteBody($stmt->then_body);
+            $else_body = $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body) : null;
+            return new IfLetNode($stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding, $then_body, $else_body, $stmt->line);
+        }
         if ($stmt instanceof WhileNode) {
             return new WhileNode($stmt->condition, $this->rewriteBody($stmt->body), $stmt->line);
+        }
+        if ($stmt instanceof WhileLetNode) {
+            return new WhileLetNode($stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding, $this->rewriteBody($stmt->body), $stmt->line);
         }
         if ($stmt instanceof LoopNode) {
             return new LoopNode($this->rewriteBody($stmt->body), $stmt->line);

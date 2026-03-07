@@ -505,6 +505,31 @@ class ModuleResolver {
                 $stmt->line
             );
         }
+        if ($stmt instanceof IfLetNode) {
+            $en = $stmt->enum_name;
+            if ($en !== null && isset($name_map[$en])) $en = $name_map[$en];
+            return new IfLetNode(
+                $this->rewriteExpr($stmt->subject, $name_map, $prefix),
+                $en,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBody($stmt->then_body, $name_map, $prefix),
+                $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body, $name_map, $prefix) : null,
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof WhileLetNode) {
+            $en = $stmt->enum_name;
+            if ($en !== null && isset($name_map[$en])) $en = $name_map[$en];
+            return new WhileLetNode(
+                $this->rewriteExpr($stmt->subject, $name_map, $prefix),
+                $en,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBody($stmt->body, $name_map, $prefix),
+                $stmt->line
+            );
+        }
         if ($stmt instanceof LoopNode) {
             return new LoopNode($this->rewriteBody($stmt->body, $name_map, $prefix), $stmt->line);
         }
@@ -630,6 +655,9 @@ class ModuleResolver {
             return new IndexNode($this->rewriteExpr($expr->object, $name_map, $prefix), $this->rewriteExpr($expr->index, $name_map, $prefix), $expr->line);
         }
         if ($expr instanceof IfNode) {
+            return $this->rewriteStmt($expr, $name_map, $prefix);
+        }
+        if ($expr instanceof IfLetNode) {
             return $this->rewriteStmt($expr, $name_map, $prefix);
         }
         if ($expr instanceof MatchNode) {

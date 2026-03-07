@@ -408,6 +408,11 @@ trait CodeGenExpr {
             return;
         }
 
+        if ($expr instanceof IfLetNode) {
+            $this->generateIfLetExpr($expr);
+            return;
+        }
+
         throw new RuntimeException("Unknown expression type: " . get_class($expr));
     }
 
@@ -427,6 +432,42 @@ trait CodeGenExpr {
         $this->asm->patch32($jmp_patch, $this->asm->pos() - $jmp_patch - 4);
     }
 
+    private function generateIfLetExpr(IfLetNode $node): void {
+        if ($node->else_body === null) {
+            throw new RuntimeException("if let expression requires else branch on line {$node->line}");
+        }
+        $subject_slot = $this->if_let_subject_slots[spl_object_id($node)];
+        $enum_type = $subject_slot['enum_type'];
+        $discriminant = $this->enum_defs[$enum_type]['variants'][$node->variant_name]['discriminant'];
+
+        $this->generateExpr($node->subject);
+        $this->asm->store(X86::RBP, -$subject_slot['offset'], X86::RAX);
+        if ($subject_slot['has_payload']) {
+            $this->asm->store(X86::RBP, -($subject_slot['offset'] - 8), X86::RDX);
+        }
+        $this->asm->load(X86::RAX, X86::RBP, -$subject_slot['offset']);
+        $this->asm->mov_imm32(X86::RCX, $discriminant);
+        $this->asm->cmp(X86::RAX, X86::RCX);
+        $jne_else = $this->asm->jne_rel32();
+
+        if ($node->binding !== null) {
+            $binding_slot = $this->if_let_binding_slots[spl_object_id($node)];
+            $this->asm->load(X86::RCX, X86::RBP, -($subject_slot['offset'] - 8));
+            $this->asm->store(X86::RBP, -$binding_slot['offset'], X86::RCX);
+            $field_type = $this->enum_defs[$enum_type]['variants'][$node->variant_name]['fields'][0] ?? 'i32';
+            $this->vars[$node->binding] = ['offset' => $binding_slot['offset'], 'type' => $field_type];
+        }
+        $this->generateBodyForExpr($node->then_body);
+        if ($node->binding !== null) {
+            unset($this->vars[$node->binding]);
+        }
+        $jmp_end = $this->asm->jmp_rel32();
+        $else_pos = $this->asm->pos();
+        $this->asm->patch32($jne_else, $else_pos - $jne_else - 4);
+        $this->generateBodyForExpr($node->else_body);
+        $this->asm->patch32($jmp_end, $this->asm->pos() - $jmp_end - 4);
+    }
+
     private function generateBodyForExpr(array $stmts): void {
         $n = count($stmts);
         for ($i = 0; $i < $n; $i++) {
@@ -435,6 +476,8 @@ trait CodeGenExpr {
                 $this->generateExpr($stmt->value);
             } elseif ($i === $n - 1 && $stmt instanceof IfNode) {
                 $this->generateIfExpr($stmt);
+            } elseif ($i === $n - 1 && $stmt instanceof IfLetNode) {
+                $this->generateIfLetExpr($stmt);
             } elseif ($i === $n - 1 && $stmt instanceof MatchNode) {
                 $this->generateMatch($stmt, true);
             } else {

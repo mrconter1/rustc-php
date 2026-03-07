@@ -178,8 +178,19 @@ class OwnershipChecker {
                 $this->collectTypesFromStmts($stmt->then_body, $types);
                 if ($stmt->else_body !== null) $this->collectTypesFromStmts($stmt->else_body, $types);
             }
+            if ($stmt instanceof IfLetNode) {
+                $this->collectTypesFromExpr($stmt->subject, $types);
+                if ($stmt->enum_name !== null) $types[$stmt->enum_name] = true;
+                $this->collectTypesFromStmts($stmt->then_body, $types);
+                if ($stmt->else_body !== null) $this->collectTypesFromStmts($stmt->else_body, $types);
+            }
             if ($stmt instanceof WhileNode) {
                 $this->collectTypesFromExpr($stmt->condition, $types);
+                $this->collectTypesFromStmts($stmt->body, $types);
+            }
+            if ($stmt instanceof WhileLetNode) {
+                $this->collectTypesFromExpr($stmt->subject, $types);
+                if ($stmt->enum_name !== null) $types[$stmt->enum_name] = true;
                 $this->collectTypesFromStmts($stmt->body, $types);
             }
             if ($stmt instanceof LoopNode) $this->collectTypesFromStmts($stmt->body, $types);
@@ -221,6 +232,12 @@ class OwnershipChecker {
         }
         if ($expr instanceof IfNode) {
             $this->collectTypesFromExpr($expr->condition, $types);
+            $this->collectTypesFromStmts($expr->then_body, $types);
+            if ($expr->else_body !== null) $this->collectTypesFromStmts($expr->else_body, $types);
+        }
+        if ($expr instanceof IfLetNode) {
+            $this->collectTypesFromExpr($expr->subject, $types);
+            if ($expr->enum_name !== null) $types[$expr->enum_name] = true;
             $this->collectTypesFromStmts($expr->then_body, $types);
             if ($expr->else_body !== null) $this->collectTypesFromStmts($expr->else_body, $types);
         }
@@ -590,6 +607,80 @@ class OwnershipChecker {
             return;
         }
 
+        if ($stmt instanceof IfLetNode) {
+            $this->checkExpr($stmt->subject);
+            $subject_type = $this->exprType($stmt->subject);
+            $base_type = $subject_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+            $enum_type = $stmt->enum_name ?? $base_type;
+            if (!isset($this->enum_defs[$enum_type])) {
+                throw new RuntimeException("Cannot match on non-enum type '$enum_type' on line {$stmt->line}");
+            }
+            if (!isset($this->enum_defs[$enum_type]['variants'][$stmt->variant_name])) {
+                throw new RuntimeException("Enum '$enum_type' has no variant '{$stmt->variant_name}' on line {$stmt->line}");
+            }
+            $saved = $this->vars;
+            if ($stmt->binding !== null) {
+                $field_type = $this->enum_defs[$enum_type]['variants'][$stmt->variant_name]['fields'][0] ?? 'i32';
+                $this->vars[$stmt->binding] = [
+                    'type'       => $field_type,
+                    'state'      => 'owned',
+                    'mutable'    => false,
+                    'moved_to'   => null,
+                    'moved_line' => null,
+                ];
+            }
+            $this->checkBody($stmt->then_body);
+            $after_then = $this->vars;
+            if ($stmt->else_body !== null) {
+                $this->vars = $saved;
+                $this->checkBody($stmt->else_body);
+                $after_else = $this->vars;
+                foreach ($after_else as $name => &$info) {
+                    if (isset($after_then[$name]) && $after_then[$name]['state'] === 'moved') {
+                        $info['state'] = 'moved';
+                        $info['moved_to'] = $after_then[$name]['moved_to'];
+                        $info['moved_line'] = $after_then[$name]['moved_line'];
+                    }
+                }
+                unset($info);
+                $this->vars = $after_else;
+            } else {
+                $this->vars = $this->mergeStates($saved, $after_then);
+            }
+            return;
+        }
+
+        if ($stmt instanceof WhileLetNode) {
+            $this->checkExpr($stmt->subject);
+            $subject_type = $this->exprType($stmt->subject);
+            $base_type = $subject_type;
+            if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+            elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+            $enum_type = $stmt->enum_name ?? $base_type;
+            if (!isset($this->enum_defs[$enum_type])) {
+                throw new RuntimeException("Cannot match on non-enum type '$enum_type' on line {$stmt->line}");
+            }
+            if (!isset($this->enum_defs[$enum_type]['variants'][$stmt->variant_name])) {
+                throw new RuntimeException("Enum '$enum_type' has no variant '{$stmt->variant_name}' on line {$stmt->line}");
+            }
+            $saved = $this->vars;
+            if ($stmt->binding !== null) {
+                $field_type = $this->enum_defs[$enum_type]['variants'][$stmt->variant_name]['fields'][0] ?? 'i32';
+                $this->vars[$stmt->binding] = [
+                    'type'       => $field_type,
+                    'state'      => 'owned',
+                    'mutable'    => false,
+                    'moved_to'   => null,
+                    'moved_line' => null,
+                ];
+            }
+            $this->checkBody($stmt->body);
+            $this->vars = $this->mergeStates($saved, $this->vars);
+            return;
+        }
+
         if ($stmt instanceof LoopNode) {
             $saved = $this->vars;
             $this->checkBody($stmt->body);
@@ -767,6 +858,11 @@ class OwnershipChecker {
         }
 
         if ($expr instanceof IfNode) {
+            $this->checkStmt($expr);
+            return;
+        }
+
+        if ($expr instanceof IfLetNode) {
             $this->checkStmt($expr);
             return;
         }
@@ -969,6 +1065,21 @@ class OwnershipChecker {
         if ($expr instanceof IfNode) {
             if (!empty($expr->then_body)) {
                 $last = end($expr->then_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->exprType($last->value);
+                }
+            }
+            return 'i32';
+        }
+        if ($expr instanceof IfLetNode) {
+            if (!empty($expr->then_body)) {
+                $last = end($expr->then_body);
+                if ($last instanceof ReturnNode && $last->value !== null) {
+                    return $this->exprType($last->value);
+                }
+            }
+            if ($expr->else_body !== null && !empty($expr->else_body)) {
+                $last = end($expr->else_body);
                 if ($last instanceof ReturnNode && $last->value !== null) {
                     return $this->exprType($last->value);
                 }

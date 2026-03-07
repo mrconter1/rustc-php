@@ -1,0 +1,15 @@
+// exit: 0
+// stdout: 100
+fn main() {
+    let opt: Option<i32> = Option::<i32>::Some(10);
+    let v = if let Some(n) = opt {
+        let inner: Option<i32> = Option::<i32>::Some(n * 10);
+        match inner {
+            Option::<i32>::Some(x) => x,
+            Option::<i32>::None => 0,
+        }
+    } else {
+        0
+    };
+    println!("{}", v);
+}
