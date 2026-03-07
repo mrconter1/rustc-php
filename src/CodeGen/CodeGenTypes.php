@@ -20,8 +20,13 @@ trait CodeGenTypes {
         return $elements;
     }
 
+    private function isRawPointerType(string $type): bool {
+        return str_starts_with($type, '*const ') || str_starts_with($type, '*mut ');
+    }
+
     private function typeSize(string $type): int {
         if ($type === '()') return 0;
+        if ($this->isRawPointerType($type)) return 8;
         $elements = $this->tupleElementTypes($type);
         if ($elements !== null) {
             $n = 0;
@@ -87,6 +92,9 @@ trait CodeGenTypes {
                 }
             }
             return 'i32';
+        }
+        if ($expr instanceof CastNode) {
+            return $expr->target_type;
         }
         if ($expr instanceof IdentNode) {
             $type = $this->vars[$expr->name]['type'] ?? 'i32';

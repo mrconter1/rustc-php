@@ -308,7 +308,8 @@ class OwnershipChecker {
             if (!isset($this->vars[$name])) {
                 throw new RuntimeException("Undefined variable '$name' on line {$stmt->line}");
             }
-            if (!str_starts_with($this->vars[$name]['type'], '&mut ')) {
+            $t = $this->vars[$name]['type'];
+            if (!str_starts_with($t, '&mut ') && !str_starts_with($t, '*mut ')) {
                 throw new RuntimeException("Cannot assign through immutable reference '$name' on line {$stmt->line}");
             }
         }
@@ -349,12 +350,34 @@ class OwnershipChecker {
             $type = $stmt->type_name ?? $expr_type;
 
             if ($stmt->type_name !== null && $stmt->type_name !== $expr_type && !$this->integerTypesCompatible($stmt->type_name, $expr_type)) {
-                $elements = $this->tupleElementTypes($stmt->type_name);
-                $expr_elements = $this->tupleElementTypes($expr_type);
-                if ($elements === null || $expr_elements === null || $elements != $expr_elements) {
-                    throw new RuntimeException(
-                        "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' on line {$stmt->line}"
-                    );
+                if ($this->isRawPointerType($stmt->type_name) && (str_starts_with($expr_type, '&') || str_starts_with($expr_type, '&mut '))) {
+                    $ptr_inner = substr($stmt->type_name, strpos($stmt->type_name, ' ') + 1);
+                    $ref_inner = str_starts_with($expr_type, '&mut ') ? substr($expr_type, 5) : substr($expr_type, 1);
+                    if ($ptr_inner !== $ref_inner) {
+                        throw new RuntimeException(
+                            "Type mismatch: cannot cast '$expr_type' to '{$stmt->type_name}' on line {$stmt->line}"
+                        );
+                    }
+                    if (str_starts_with($stmt->type_name, '*mut ') && !str_starts_with($expr_type, '&mut ')) {
+                        throw new RuntimeException(
+                            "Type mismatch: *mut pointer requires &mut reference on line {$stmt->line}"
+                        );
+                    }
+                } else {
+                    $elements = $this->tupleElementTypes($stmt->type_name);
+                    $expr_elements = $this->tupleElementTypes($expr_type);
+                    if ($elements === null || $expr_elements === null || $elements != $expr_elements) {
+                        throw new RuntimeException(
+                            "Type mismatch: expected '{$stmt->type_name}', got '$expr_type' on line {$stmt->line}"
+                        );
+                    }
+                }
+            }
+
+            if ($this->isRawPointerType($type) && str_starts_with($type, '*mut ') && $stmt->value instanceof CastNode) {
+                $inner_type = $this->exprType($stmt->value->expr);
+                if (!str_starts_with($inner_type, '&mut ')) {
+                    throw new RuntimeException("*mut pointer requires &mut reference on line {$stmt->line}");
                 }
             }
 
@@ -486,7 +509,8 @@ class OwnershipChecker {
                     throw new RuntimeException("Undefined variable '$name' on line {$stmt->line}");
                 }
                 $var = $this->vars[$name];
-                if (!str_starts_with($var['type'], '&mut ')) {
+                $t = $var['type'];
+                if (!str_starts_with($t, '&mut ') && !str_starts_with($t, '*mut ')) {
                     throw new RuntimeException(
                         "Cannot assign through immutable reference '$name' on line {$stmt->line}"
                     );
@@ -726,6 +750,11 @@ class OwnershipChecker {
             return;
         }
 
+        if ($expr instanceof CastNode) {
+            $this->checkExpr($expr->expr);
+            return;
+        }
+
         if ($expr instanceof UnaryOpNode) {
             $this->checkExpr($expr->operand);
             return;
@@ -836,7 +865,12 @@ class OwnershipChecker {
         return $merged;
     }
 
+    private function isRawPointerType(string $type): bool {
+        return str_starts_with($type, '*const ') || str_starts_with($type, '*mut ');
+    }
+
     private function isCopy(string $type): bool {
+        if ($this->isRawPointerType($type)) return true;
         if (str_starts_with($type, '&mut ')) return false;
         if (str_starts_with($type, '&')) return true;
         if (in_array($type, ['i32', 'bool'], true) || in_array($type, self::INT_PRIMITIVES, true)) return true;
@@ -896,6 +930,9 @@ class OwnershipChecker {
             }
             return 'i32';
         }
+        if ($expr instanceof CastNode) {
+            return $expr->target_type;
+        }
         if ($expr instanceof IdentNode) {
             $type = $this->vars[$expr->name]['type'] ?? 'i32';
             if (str_starts_with($type, '&mut ')) return substr($type, 5);
@@ -918,6 +955,9 @@ class OwnershipChecker {
         }
         if ($expr instanceof DerefNode) {
             $inner_type = $this->exprType($expr->operand);
+            if ($this->isRawPointerType($inner_type)) {
+                return substr($inner_type, strpos($inner_type, ' ') + 1);
+            }
             if (str_starts_with($inner_type, '&mut ')) return substr($inner_type, 5);
             if (str_starts_with($inner_type, '&')) return substr($inner_type, 1);
             return $inner_type;

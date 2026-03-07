@@ -28,6 +28,7 @@ sort($files);
 
 $passed = 0;
 $failed = 0;
+$failed_tests = [];
 $start  = hrtime(true);
 
 foreach ($files as $file) {
@@ -51,6 +52,7 @@ foreach ($files as $file) {
         $passed++;
     } else {
         echo "FAIL  $name — $result\n";
+        $failed_tests[] = ['name' => $name, 'reason' => $result];
         $failed++;
     }
 }
@@ -60,6 +62,14 @@ foreach ($files as $file) {
 $elapsed = (hrtime(true) - $start) / 1e9;
 echo "\n$passed passed, $failed failed\n";
 echo "Total time: " . round($elapsed, 2) . "s\n";
+
+if ($failed > 0) {
+    echo "\n--- Failed tests ---\n";
+    foreach ($failed_tests as $t) {
+        echo $t['name'] . "\n  " . $t['reason'] . "\n";
+    }
+}
+
 exit($failed > 0 ? 1 : 0);
 
 function parseHeader(string $file): array {

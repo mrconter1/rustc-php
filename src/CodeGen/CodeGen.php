@@ -219,6 +219,9 @@ class CodeGen {
         if ($expr instanceof UnaryOpNode || $expr instanceof BorrowNode || $expr instanceof DerefNode) {
             $this->collectTypesFromExpr($expr->operand, $types);
         }
+        if ($expr instanceof CastNode) {
+            $this->collectTypesFromExpr($expr->expr, $types);
+        }
         if ($expr instanceof FieldAccessNode) $this->collectTypesFromExpr($expr->object, $types);
         if ($expr instanceof TupleIndexNode) $this->collectTypesFromExpr($expr->object, $types);
         if ($expr instanceof IndexNode) {
@@ -470,6 +473,10 @@ class CodeGen {
         }
         if ($expr instanceof UnaryOpNode || $expr instanceof BorrowNode || $expr instanceof DerefNode) {
             $this->collectMatchSlotsFromExpr($expr->operand);
+            return;
+        }
+        if ($expr instanceof CastNode) {
+            $this->collectMatchSlotsFromExpr($expr->expr);
             return;
         }
         if ($expr instanceof TupleLitNode) {

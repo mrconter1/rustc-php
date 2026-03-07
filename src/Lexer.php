@@ -32,6 +32,7 @@ class Lexer {
         'trait'    => Token::TRAIT,
         'for'      => Token::FOR,
         'in'       => Token::IN,
+        'as'       => Token::AS,
     ];
 
     public function __construct(string $source) {

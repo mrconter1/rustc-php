@@ -220,6 +220,9 @@ class ClosureDesugar {
         if ($expr instanceof DerefNode) {
             return new DerefNode($this->rewriteExpr($expr->operand, $scope, $closure_vars), $expr->line);
         }
+        if ($expr instanceof CastNode) {
+            return new CastNode($this->rewriteExpr($expr->expr, $scope, $closure_vars), $expr->target_type, $expr->line);
+        }
 
         if ($expr instanceof FieldAccessNode) {
             return new FieldAccessNode(
@@ -513,6 +516,9 @@ class ClosureDesugar {
         }
         if ($expr instanceof DerefNode) {
             return new DerefNode($this->rewriteClosureExpr($expr->operand, $captures, $lb), $expr->line);
+        }
+        if ($expr instanceof CastNode) {
+            return new CastNode($this->rewriteClosureExpr($expr->expr, $captures, $lb), $expr->target_type, $expr->line);
         }
         if ($expr instanceof IndexNode) {
             return new IndexNode(

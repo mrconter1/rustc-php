@@ -620,6 +620,9 @@ class ModuleResolver {
         if ($expr instanceof DerefNode) {
             return new DerefNode($this->rewriteExpr($expr->operand, $name_map, $prefix), $expr->line);
         }
+        if ($expr instanceof CastNode) {
+            return new CastNode($this->rewriteExpr($expr->expr, $name_map, $prefix), $expr->target_type, $expr->line);
+        }
         if ($expr instanceof FieldAccessNode) {
             return new FieldAccessNode($this->rewriteExpr($expr->object, $name_map, $prefix), $expr->field_name, $expr->line);
         }

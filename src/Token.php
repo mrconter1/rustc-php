@@ -26,6 +26,7 @@ class Token {
     const TRAIT     = 'TRAIT';
     const FOR       = 'FOR';
     const IN        = 'IN';
+    const AS        = 'AS';
     const HASH      = 'HASH';     // #
     const FAT_ARROW = 'FAT_ARROW'; // =>
 

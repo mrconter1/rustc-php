@@ -670,15 +670,26 @@ class Parser {
     }
 
     private function parseMulDiv(): mixed {
-        $left = $this->parseUnary();
+        $left = $this->parseCast();
         while ($this->check(Token::STAR) || $this->check(Token::SLASH) || $this->check(Token::PERCENT)) {
             $op    = $this->current()->value;
             $line  = $this->current()->line;
             $this->pos++;
-            $right = $this->parseUnary();
+            $right = $this->parseCast();
             $left  = new BinaryOpNode($left, $op, $right, $line);
         }
         return $left;
+    }
+
+    private function parseCast(): mixed {
+        $expr = $this->parseUnary();
+        if ($this->check(Token::AS)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $target_type = $this->parseType();
+            return new CastNode($expr, $target_type, $line);
+        }
+        return $expr;
     }
 
     private function parseUnary(): mixed {
@@ -977,6 +988,18 @@ class Parser {
                 $ref = '&mut ';
                 $this->pos++;
             }
+        }
+        if ($this->check(Token::STAR)) {
+            $this->pos++;
+            if ($this->check(Token::CONST)) {
+                $this->pos++;
+                return $ref . '*const ' . $this->parseType();
+            }
+            if ($this->check(Token::MUT)) {
+                $this->pos++;
+                return $ref . '*mut ' . $this->parseType();
+            }
+            throw new RuntimeException("Expected *const or *mut in raw pointer type on line " . $this->current()->line);
         }
         if ($this->check(Token::LPAREN)) {
             $this->pos++;

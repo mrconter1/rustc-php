@@ -365,6 +365,8 @@ class Monomorphizer {
             foreach ($expr->elements as $e) $this->scanExpr($e);
         } elseif ($expr instanceof TupleIndexNode) {
             $this->scanExpr($expr->object);
+        } elseif ($expr instanceof CastNode) {
+            $this->scanExpr($expr->expr);
         } elseif ($expr instanceof IndexNode) {
             $this->scanExpr($expr->object);
             $this->scanExpr($expr->index);
@@ -479,6 +481,7 @@ class Monomorphizer {
             if ($elements !== null && isset($elements[$expr->index])) return $elements[$expr->index];
             return null;
         }
+        if ($expr instanceof CastNode) return $expr->target_type;
         if ($expr instanceof IntLitNode) return 'i32';
         if ($expr instanceof BoolLitNode) return 'bool';
         if ($expr instanceof StringFromNode) return 'String';
@@ -575,6 +578,13 @@ class Monomorphizer {
         $ref = '';
         if (str_starts_with($type, '&mut ')) { $ref = '&mut '; $type = substr($type, 5); }
         elseif (str_starts_with($type, '&'))  { $ref = '&';     $type = substr($type, 1); }
+
+        if (str_starts_with($type, '*const ')) {
+            return $ref . '*const ' . $this->substituteType(substr($type, 7), $map);
+        }
+        if (str_starts_with($type, '*mut ')) {
+            return $ref . '*mut ' . $this->substituteType(substr($type, 5), $map);
+        }
 
         $elements = $this->tupleElementTypes($type);
         if ($elements !== null) {
@@ -749,6 +759,13 @@ class Monomorphizer {
         }
         if ($expr instanceof TupleIndexNode) {
             return new TupleIndexNode($this->substituteExpr($expr->object, $map), $expr->index, $expr->line);
+        }
+        if ($expr instanceof CastNode) {
+            return new CastNode(
+                $this->substituteExpr($expr->expr, $map),
+                $this->substituteType($expr->target_type, $map),
+                $expr->line
+            );
         }
         if ($expr instanceof MethodCallNode) {
             $args = [];
@@ -950,6 +967,9 @@ class Monomorphizer {
         if ($expr instanceof TupleIndexNode) {
             return new TupleIndexNode($this->rewriteExpr($expr->object), $expr->index, $expr->line);
         }
+        if ($expr instanceof CastNode) {
+            return new CastNode($this->rewriteExpr($expr->expr), $this->rewriteTypeName($expr->target_type), $expr->line);
+        }
         if ($expr instanceof IndexNode) {
             return new IndexNode($this->rewriteExpr($expr->object), $this->rewriteExpr($expr->index), $expr->line);
         }
@@ -975,6 +995,13 @@ class Monomorphizer {
         $ref = '';
         if (str_starts_with($type, '&mut ')) { $ref = '&mut '; $type = substr($type, 5); }
         elseif (str_starts_with($type, '&'))  { $ref = '&';     $type = substr($type, 1); }
+
+        if (str_starts_with($type, '*const ')) {
+            return $ref . '*const ' . $this->rewriteTypeName(substr($type, 7));
+        }
+        if (str_starts_with($type, '*mut ')) {
+            return $ref . '*mut ' . $this->rewriteTypeName(substr($type, 5));
+        }
 
         $elements = $this->tupleElementTypes($type);
         if ($elements !== null) {

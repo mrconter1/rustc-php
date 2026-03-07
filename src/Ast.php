@@ -396,6 +396,17 @@ class DerefNode {
     }
 }
 
+class CastNode {
+    public mixed  $expr;
+    public string $target_type;
+    public int    $line;
+    public function __construct(mixed $expr, string $target_type, int $line) {
+        $this->expr        = $expr;
+        $this->target_type = $target_type;
+        $this->line        = $line;
+    }
+}
+
 class DerefAssignNode {
     public mixed $operand;
     public mixed $value;

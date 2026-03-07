@@ -61,12 +61,20 @@ trait CodeGenExpr {
             return;
         }
 
+        if ($expr instanceof CastNode) {
+            $this->generateExpr($expr->expr);
+            return;
+        }
+
         if ($expr instanceof IdentNode) {
             if (!isset($this->vars[$expr->name])) {
                 throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
             }
             $var = $this->vars[$expr->name];
             $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
+            if ($this->isRawPointerType($var['type'])) {
+                return;
+            }
             if ($var['type'] === 'String') {
                 $this->asm->load(X86::RDX, X86::RBP, -($var['offset'] - 8));
             } elseif ($var['type'] === '&String' || $var['type'] === '&mut String') {
@@ -145,6 +153,10 @@ trait CodeGenExpr {
                 $var = $this->vars[$name];
                 $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
                 $inner_type = $var['type'];
+                if ($this->isRawPointerType($inner_type)) {
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                    return;
+                }
                 if (str_starts_with($inner_type, '&mut ')) {
                     $inner_type = substr($inner_type, 5);
                 } elseif (str_starts_with($inner_type, '&')) {
