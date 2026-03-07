@@ -39,6 +39,7 @@ class CodeGen {
     private int $heap_start_off;
     private int $heap_cur_off;
     private int $heap_end_off;
+    private int $heap_free_off;
 
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
@@ -55,6 +56,7 @@ class CodeGen {
         $this->heap_start_off = $this->addDataQuad(0);
         $this->heap_cur_off   = $this->addDataQuad(0);
         $this->heap_end_off   = $this->addDataQuad(0);
+        $this->heap_free_off  = $this->addDataQuad(0);
         $this->data_patches = [];
         $this->call_patches = [];
         $this->func_addrs = [];
@@ -343,18 +345,89 @@ class CodeGen {
         $p = $this->asm->mov_imm64(X86::RSI);
         $this->data_patches[] = [$p, $this->heap_end_off];
         $this->asm->store(X86::RSI, 0, X86::RCX);
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_free_off];
+        $this->asm->xor_(X86::RAX, X86::RAX);
+        $this->asm->store(X86::RSI, 0, X86::RAX);
         $this->asm->ret();
 
         $this->func_addrs['alloc'] = $this->asm->pos();
         $this->asm->mov(X86::RCX, X86::RDI);
         $this->asm->add_imm8(X86::RCX, 7);
         $this->asm->and_imm32(X86::RCX, 0xFFFFFFF8);
+        $this->asm->add_imm8(X86::RCX, 16);
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_free_off];
+        $this->asm->load(X86::R9, X86::RSI, 0);
+        $this->asm->xor_(X86::R8, X86::R8);
+        $alloc_loop = $this->asm->pos();
+        $this->asm->test(X86::R9, X86::R9);
+        $jz_bump = $this->asm->jz_rel32();
+        $this->asm->load(X86::RDX, X86::R9, 8);
+        $this->asm->cmp(X86::RDX, X86::RCX);
+        $jge_found = $this->asm->jge_rel32();
+        $this->asm->mov(X86::R8, X86::R9);
+        $this->asm->load(X86::R9, X86::R9, 0);
+        $this->asm->jmp_to($alloc_loop);
+        $alloc_found = $this->asm->pos();
+        $this->asm->load(X86::R10, X86::R9, 0);
+        $this->asm->test(X86::R8, X86::R8);
+        $jz_head = $this->asm->jz_rel32();
+        $this->asm->store(X86::R8, 0, X86::R10);
+        $jmp_after = $this->asm->jmp_rel32();
+        $this->asm->patch32($jz_head, $this->asm->pos() - $jz_head - 4);
+        $this->asm->store(X86::RSI, 0, X86::R10);
+        $after_head = $this->asm->pos();
+        $this->asm->patch32($jmp_after, $after_head - $jmp_after - 4);
+        $this->asm->store(X86::R9, 8, X86::RCX);
+        $this->asm->mov(X86::RAX, X86::R9);
+        $this->asm->add_imm8(X86::RAX, 16);
+        $this->asm->ret();
+        $alloc_bump = $this->asm->pos();
+        $this->asm->patch32($jz_bump, $alloc_bump - $jz_bump - 4);
+        $this->asm->patch32($jge_found, $alloc_found - $jge_found - 4);
         $p = $this->asm->mov_imm64(X86::RSI);
         $this->data_patches[] = [$p, $this->heap_cur_off];
         $this->asm->load(X86::RAX, X86::RSI, 0);
-        $this->asm->load(X86::RDX, X86::RSI, 0);
+        $this->asm->mov(X86::RDX, X86::RAX);
         $this->asm->add(X86::RDX, X86::RCX);
         $this->asm->store(X86::RSI, 0, X86::RDX);
+        $this->asm->store(X86::RAX, 8, X86::RCX);
+        $this->asm->add_imm8(X86::RAX, 16);
+        $this->asm->ret();
+
+        $this->func_addrs['dealloc'] = $this->asm->pos();
+        $this->asm->sub_imm8(X86::RDI, 16);
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_free_off];
+        $this->asm->load(X86::RAX, X86::RSI, 0);
+        $this->asm->store(X86::RDI, 0, X86::RAX);
+        $this->asm->store(X86::RSI, 0, X86::RDI);
+        $this->asm->ret();
+
+        $this->func_addrs['realloc'] = $this->asm->pos();
+        $this->asm->load(X86::RCX, X86::RDI, -8);
+        $this->asm->sub_imm8(X86::RCX, 16);
+        $this->asm->cmp(X86::RSI, X86::RCX);
+        $jle_done = $this->asm->jle_rel32();
+        $this->asm->push(X86::RDI);
+        $this->asm->push(X86::RSI);
+        $this->asm->mov(X86::RDI, X86::RSI);
+        $patch_alloc = $this->asm->call_rel32();
+        $this->call_patches[] = [$patch_alloc, 'alloc'];
+        $this->asm->pop(X86::R9);
+        $this->asm->pop(X86::R8);
+        $this->asm->mov(X86::RSI, X86::R8);
+        $this->asm->mov(X86::RDI, X86::RAX);
+        $this->asm->rep_movsb();
+        $this->asm->push(X86::RAX);
+        $this->asm->mov(X86::RDI, X86::R8);
+        $patch_dealloc = $this->asm->call_rel32();
+        $this->call_patches[] = [$patch_dealloc, 'dealloc'];
+        $this->asm->pop(X86::RAX);
+        $this->asm->ret();
+        $this->asm->patch32($jle_done, $this->asm->pos() - $jle_done - 4);
+        $this->asm->mov(X86::RAX, X86::RDI);
         $this->asm->ret();
     }
 
@@ -370,9 +443,9 @@ class CodeGen {
 
     private function patchCalls(): void {
         foreach ($this->call_patches as [$patch_pos, $func_name]) {
-            if ($func_name === 'alloc::alloc') {
-                $func_name = 'alloc__alloc';
-            }
+            if ($func_name === 'alloc::alloc') $func_name = 'alloc__alloc';
+            if ($func_name === 'alloc::dealloc') $func_name = 'alloc__dealloc';
+            if ($func_name === 'alloc::realloc') $func_name = 'alloc__realloc';
             if (!isset($this->func_addrs[$func_name])) {
                 throw new RuntimeException("Undefined function '$func_name'");
             }
@@ -460,6 +533,25 @@ class CodeGen {
             $this->asm->load(X86::RDI, X86::RBP, -$this->vars[$fn->params[0]['name']]['offset']);
             $patch_pos = $this->asm->call_rel32();
             $this->call_patches[] = [$patch_pos, 'alloc'];
+            $this->asm->mov(X86::RSP, X86::RBP);
+            $this->asm->pop(X86::RBP);
+            $this->asm->ret();
+            return;
+        }
+        if ($name === 'alloc__dealloc') {
+            $this->asm->load(X86::RDI, X86::RBP, -$this->vars[$fn->params[0]['name']]['offset']);
+            $patch_pos = $this->asm->call_rel32();
+            $this->call_patches[] = [$patch_pos, 'dealloc'];
+            $this->asm->mov(X86::RSP, X86::RBP);
+            $this->asm->pop(X86::RBP);
+            $this->asm->ret();
+            return;
+        }
+        if ($name === 'alloc__realloc') {
+            $this->asm->load(X86::RDI, X86::RBP, -$this->vars[$fn->params[0]['name']]['offset']);
+            $this->asm->load(X86::RSI, X86::RBP, -$this->vars[$fn->params[1]['name']]['offset']);
+            $patch_pos = $this->asm->call_rel32();
+            $this->call_patches[] = [$patch_pos, 'realloc'];
             $this->asm->mov(X86::RSP, X86::RBP);
             $this->asm->pop(X86::RBP);
             $this->asm->ret();

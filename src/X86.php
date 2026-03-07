@@ -264,6 +264,22 @@ class X86 {
         return $pos;
     }
 
+    // jge rel32 (jump if greater or equal) — returns patch position
+    public function jge_rel32(): int {
+        $this->emit("\x0F\x8D");
+        $pos = strlen($this->buffer);
+        $this->emit("\x00\x00\x00\x00");
+        return $pos;
+    }
+
+    // jle rel32 (jump if less or equal) — returns patch position
+    public function jle_rel32(): int {
+        $this->emit("\x0F\x8E");
+        $pos = strlen($this->buffer);
+        $this->emit("\x00\x00\x00\x00");
+        return $pos;
+    }
+
     // jmp rel32 — returns position of the 4-byte offset for patching
     public function jmp_rel32(): int {
         $this->emit("\xE9");
@@ -295,6 +311,11 @@ class X86 {
 
     // ret
     public function ret(): void { $this->emit("\xC3"); }
+
+    // rep movsb: copy RCX bytes from [RSI] to [RDI]
+    public function rep_movsb(): void {
+        $this->emit("\xF3\xA4");
+    }
 
     // add reg64, imm32
     public function add_imm32(int $reg, int $val): void {

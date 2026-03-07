@@ -927,6 +927,27 @@ $is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arm
                 $this->checkExpr($expr->args[0]);
                 return;
             }
+            if (in_array($expr->name, ['dealloc', 'alloc__dealloc', 'alloc::dealloc'], true)) {
+                if ($this->current_module !== 'alloc') {
+                    throw new RuntimeException("Undefined function 'dealloc'" . $this->loc($expr) . "");
+                }
+                if (count($expr->args) !== 1) {
+                    throw new RuntimeException("dealloc() takes exactly 1 argument" . $this->loc($expr) . "");
+                }
+                $this->checkExpr($expr->args[0]);
+                return;
+            }
+            if (in_array($expr->name, ['realloc', 'alloc__realloc', 'alloc::realloc'], true)) {
+                if ($this->current_module !== 'alloc') {
+                    throw new RuntimeException("Undefined function 'realloc'" . $this->loc($expr) . "");
+                }
+                if (count($expr->args) !== 2) {
+                    throw new RuntimeException("realloc() takes exactly 2 arguments" . $this->loc($expr) . "");
+                }
+                $this->checkExpr($expr->args[0]);
+                $this->checkExpr($expr->args[1]);
+                return;
+            }
             if ($expr->name === 'Box::new') {
                 if (count($expr->args) !== 1) {
                     throw new RuntimeException("Box::new() takes exactly 1 argument" . $this->loc($expr) . "");
