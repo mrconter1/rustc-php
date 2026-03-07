@@ -557,8 +557,9 @@ class OwnershipChecker {
             $base = $obj_type;
             if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
             elseif (str_starts_with($base, '&')) $base = substr($base, 1);
-            if ($base !== 'alloc__VecI32' && !preg_match('/^&(mut )?\[i32\]$/', $obj_type)) {
-                throw new RuntimeException("Index assignment only supported for VecI32 and [i32]" . $this->loc($stmt) . "");
+            $is_vec = ($base === 'alloc__VecI32' || str_starts_with($base, 'alloc__Vec__'));
+            if (!$is_vec && !preg_match('/^&(mut )?\[i32\]$/', $obj_type)) {
+                throw new RuntimeException("Index assignment only supported for Vec and [i32]" . $this->loc($stmt) . "");
             }
             return;
         }

@@ -442,8 +442,16 @@ trait CodeGenExpr {
             $base = $obj_type;
             if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
             elseif (str_starts_with($base, '&')) $base = substr($base, 1);
-            if ($base === 'alloc__VecI32') {
-                if (str_starts_with($obj_type, '&')) {
+            $elem_size = $this->vecElementSize($base);
+            if ($elem_size !== null) {
+                $is_ref = false;
+                if ($expr->object instanceof IdentNode && isset($this->vars[$expr->object->name])) {
+                    $raw_type = $this->vars[$expr->object->name]['type'];
+                    $is_ref = str_starts_with($raw_type, '&');
+                } else {
+                    $is_ref = str_starts_with($obj_type, '&');
+                }
+                if ($is_ref) {
                     $this->asm->load(X86::RAX, X86::RAX, 0);
                 } else {
                     $this->asm->push(X86::RDX);
@@ -452,10 +460,15 @@ trait CodeGenExpr {
                 $this->generateExpr($expr->index);
                 $this->asm->mov(X86::RCX, X86::RAX);
                 $this->asm->pop(X86::RAX);
-                $this->asm->imul_imm8(X86::RCX, X86::RCX, 8);
+                if ($elem_size <= 127) {
+                    $this->asm->imul_imm8(X86::RCX, X86::RCX, $elem_size);
+                } else {
+                    $this->asm->mov_imm32(X86::R8, $elem_size);
+                    $this->asm->imul(X86::RCX, X86::R8);
+                }
                 $this->asm->add(X86::RAX, X86::RCX);
                 $this->asm->load(X86::RAX, X86::RAX, 0);
-                if ($base === 'alloc__VecI32' && !str_starts_with($obj_type, '&')) {
+                if (!$is_ref) {
                     $this->asm->pop(X86::RDX);
                 }
                 return;

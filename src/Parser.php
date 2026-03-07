@@ -888,6 +888,15 @@ class Parser {
 
         if ($token->type === Token::IDENT || $token->type === Token::SELF) {
             $this->pos++;
+            if ($token->value === 'size_of' && $this->check(Token::DCOLON)) {
+                $this->pos++;
+                $this->expect(Token::LT);
+                $inner_type = $this->parseType();
+                $this->expect(Token::GT);
+                $this->expect(Token::LPAREN);
+                $this->expect(Token::RPAREN);
+                return new SizeOfNode($inner_type, $token->line);
+            }
             $builtin_enum_type = $this->tryParseBuiltinEnumType($token->value);
             if ($builtin_enum_type !== null) {
                 $this->expect(Token::DCOLON);

@@ -52,6 +52,27 @@ trait CodeGenTypes {
         return false;
     }
 
+    private function vecElementSize(string $base): ?int {
+        if ($base === 'alloc__VecI32') return 8;
+        if (str_starts_with($base, 'alloc__Vec__')) {
+            $element_type = substr($base, strlen('alloc__Vec__'));
+            return $this->typeSize($element_type);
+        }
+        return null;
+    }
+
+    private function isVecType(string $base): bool {
+        return $this->vecElementSize($base) !== null;
+    }
+
+    private function vecElementType(string $base): ?string {
+        if ($base === 'alloc__VecI32') return 'i32';
+        if (str_starts_with($base, 'alloc__Vec__')) {
+            return substr($base, strlen('alloc__Vec__'));
+        }
+        return null;
+    }
+
     private function exprType(mixed $expr): string {
         if ($expr instanceof UnitLitNode) return '()';
         if ($expr instanceof TupleLitNode) {
@@ -133,7 +154,8 @@ trait CodeGenTypes {
             $base = $obj_type;
             if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
             elseif (str_starts_with($base, '&')) $base = substr($base, 1);
-            if ($base === 'alloc__VecI32') return 'i32';
+            $elem_type = $this->vecElementType($base);
+            if ($elem_type !== null) return $elem_type;
             return 'i32';
         }
         if ($expr instanceof IfNode) {

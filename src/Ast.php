@@ -410,6 +410,15 @@ class IntLitNode {
     }
 }
 
+class SizeOfNode {
+    public string $type;
+    public int    $line;
+    public function __construct(string $type, int $line) {
+        $this->type = $type;
+        $this->line = $line;
+    }
+}
+
 class BoolLitNode {
     public bool $value;
     public int  $line;

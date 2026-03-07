@@ -127,11 +127,11 @@ class Monomorphizer {
 
         $consts = [];
         foreach ($program->consts as $c) {
-            $consts[] = new ConstItemNode($c->name, $this->rewriteTypeName($c->type), $this->rewriteExpr($c->value), $c->line);
+            $consts[] = new ConstItemNode($c->name, $this->rewriteTypeName($c->type), $this->rewriteExpr($c->value, null), $c->line);
         }
         $statics = [];
         foreach ($program->statics as $s) {
-            $statics[] = new StaticItemNode($s->name, $this->rewriteTypeName($s->type), $this->rewriteExpr($s->value), $s->mutable, $s->line);
+            $statics[] = new StaticItemNode($s->name, $this->rewriteTypeName($s->type), $this->rewriteExpr($s->value, null), $s->mutable, $s->line);
         }
         return new ProgramNode(
             $this->concrete_fns,
@@ -867,21 +867,41 @@ class Monomorphizer {
         if ($expr instanceof MatchNode) {
             return $this->substituteStmt($expr, $map);
         }
+        if ($expr instanceof SizeOfNode) {
+            $concrete_type = $this->substituteType($expr->type, $map);
+            $size = $this->typeSize($concrete_type);
+            return new IntLitNode($size, $expr->line);
+        }
         return $expr;
+    }
+
+    private function typeSize(string $type): int {
+        $type = preg_replace('/^&(mut )?/', '', $type);
+        if (str_starts_with($type, '*const ') || str_starts_with($type, '*mut ')) return 8;
+        if (preg_match('/^Box<.+>$/', $type)) return 8;
+        $elements = $this->tupleElementTypes($type);
+        if ($elements !== null) {
+            $n = 0;
+            foreach ($elements as $t) $n += $this->typeSize($t);
+            return $n;
+        }
+        if ($type === 'u128') return 16;
+        if (in_array($type, ['i32', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'bool'], true)) return 8;
+        return 8;
     }
 
     private function rewriteBody(array $stmts): array {
         $result = [];
         foreach ($stmts as $stmt) {
-            $result[] = $this->rewriteStmt($stmt);
+            $result[] = $this->rewriteStmt($stmt, null);
         }
         return $result;
     }
 
-    private function rewriteStmt(mixed $stmt): mixed {
+    private function rewriteStmt(mixed $stmt, ?string $expected_type): mixed {
         if ($stmt instanceof LetNode) {
             $type_name = $stmt->type_name !== null ? $this->rewriteTypeName($stmt->type_name) : null;
-            $new_value = $this->rewriteExpr($stmt->value);
+            $new_value = $this->rewriteExpr($stmt->value, $type_name);
             $inferred = $stmt->type_name !== null
                 ? preg_replace('/^&(mut )?/', '', $stmt->type_name)
                 : $this->guessExprType($stmt->value);
@@ -898,53 +918,54 @@ class Monomorphizer {
             return new LetNode($stmt->name, $type_name, $new_value, $stmt->mutable, $stmt->line, $stmt->bindings);
         }
         if ($stmt instanceof AssignNode) {
-            return new AssignNode($stmt->name, $this->rewriteExpr($stmt->value), $stmt->line);
+            $var_type = $this->var_types[$stmt->name] ?? null;
+            return new AssignNode($stmt->name, $this->rewriteExpr($stmt->value, $var_type), $stmt->line);
         }
         if ($stmt instanceof CompoundAssignNode) {
             return new CompoundAssignNode(
-                $this->rewriteExpr($stmt->target),
+                $this->rewriteExpr($stmt->target, null),
                 $stmt->op,
-                $this->rewriteExpr($stmt->value),
+                $this->rewriteExpr($stmt->value, null),
                 $stmt->line
             );
         }
         if ($stmt instanceof FieldAssignNode) {
             return new FieldAssignNode(
-                $this->rewriteExpr($stmt->object), $stmt->field_name,
-                $this->rewriteExpr($stmt->value), $stmt->line
+                $this->rewriteExpr($stmt->object, null), $stmt->field_name,
+                $this->rewriteExpr($stmt->value, null), $stmt->line
             );
         }
         if ($stmt instanceof DerefAssignNode) {
             return new DerefAssignNode(
-                $this->rewriteExpr($stmt->operand),
-                $this->rewriteExpr($stmt->value), $stmt->line
+                $this->rewriteExpr($stmt->operand, null),
+                $this->rewriteExpr($stmt->value, null), $stmt->line
             );
         }
         if ($stmt instanceof IndexAssignNode) {
             return new IndexAssignNode(
-                $this->rewriteExpr($stmt->object),
-                $this->rewriteExpr($stmt->index),
-                $this->rewriteExpr($stmt->value), $stmt->line
+                $this->rewriteExpr($stmt->object, null),
+                $this->rewriteExpr($stmt->index, null),
+                $this->rewriteExpr($stmt->value, null), $stmt->line
             );
         }
         if ($stmt instanceof ReturnNode) {
             return new ReturnNode(
-                $stmt->value !== null ? $this->rewriteExpr($stmt->value) : null, $stmt->line
+                $stmt->value !== null ? $this->rewriteExpr($stmt->value, null) : null, $stmt->line
             );
         }
         if ($stmt instanceof ExprStmtNode) {
-            return new ExprStmtNode($this->rewriteExpr($stmt->expr), $stmt->line);
+            return new ExprStmtNode($this->rewriteExpr($stmt->expr, null), $stmt->line);
         }
         if ($stmt instanceof PrintlnNode) {
             $parts = [];
             foreach ($stmt->parts as $part) {
-                $parts[] = is_string($part) ? $part : $this->rewriteExpr($part);
+                $parts[] = is_string($part) ? $part : $this->rewriteExpr($part, null);
             }
             return new PrintlnNode($parts, $stmt->line);
         }
         if ($stmt instanceof IfNode) {
             return new IfNode(
-                $this->rewriteExpr($stmt->condition),
+                $this->rewriteExpr($stmt->condition, null),
                 $this->rewriteBody($stmt->then_body),
                 $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body) : null,
                 $stmt->line
@@ -952,14 +973,14 @@ class Monomorphizer {
         }
         if ($stmt instanceof WhileNode) {
             return new WhileNode(
-                $this->rewriteExpr($stmt->condition),
+                $this->rewriteExpr($stmt->condition, null),
                 $this->rewriteBody($stmt->body), $stmt->line
             );
         }
         if ($stmt instanceof IfLetNode) {
             $en = $stmt->enum_name !== null ? $this->rewriteTypeName($stmt->enum_name) : null;
             return new IfLetNode(
-                $this->rewriteExpr($stmt->subject),
+                $this->rewriteExpr($stmt->subject, null),
                 $en,
                 $stmt->variant_name,
                 $stmt->binding,
@@ -972,7 +993,7 @@ class Monomorphizer {
         if ($stmt instanceof WhileLetNode) {
             $en = $stmt->enum_name !== null ? $this->rewriteTypeName($stmt->enum_name) : null;
             return new WhileLetNode(
-                $this->rewriteExpr($stmt->subject),
+                $this->rewriteExpr($stmt->subject, null),
                 $en,
                 $stmt->variant_name,
                 $stmt->binding,
@@ -991,15 +1012,15 @@ class Monomorphizer {
                     $arm->binding, $this->rewriteBody($arm->body), $arm->line, $arm->int_lit
                 );
             }
-            return new MatchNode($this->rewriteExpr($stmt->subject), $arms, $stmt->line);
+            return new MatchNode($this->rewriteExpr($stmt->subject, null), $arms, $stmt->line);
         }
         return $stmt;
     }
 
-    private function rewriteExpr(mixed $expr): mixed {
+    private function rewriteExpr(mixed $expr, ?string $expected_type): mixed {
         if ($expr instanceof CallNode) {
             $args = [];
-            foreach ($expr->args as $a) $args[] = $this->rewriteExpr($a);
+            foreach ($expr->args as $a) $args[] = $this->rewriteExpr($a, null);
 
             if (isset($this->generic_fns[$expr->name])) {
                 $map = $this->inferTypeMap($this->generic_fns[$expr->name], $expr->args);
@@ -1017,6 +1038,19 @@ class Monomorphizer {
                     $method_fn = $this->findImplMethod($struct_part, $method_name);
                     if ($method_fn !== null) {
                         $map = $this->inferImplTypeMap($struct_part, $method_fn, $expr->args);
+                        if ($map === null && $expected_type !== null) {
+                            $bare = preg_replace('/^&(mut )?/', '', $expected_type);
+                            $base = $this->stripGeneric($bare);
+                            $arg = $this->extractGenericArg($bare);
+                            if ($base === $struct_part && $arg !== null) {
+                                $tp = $this->struct_type_params[$struct_part];
+                                $map = [$tp[0] => $arg];
+                            } elseif (str_starts_with($bare, $struct_part . '__')) {
+                                $tp = $this->struct_type_params[$struct_part];
+                                $arg = substr($bare, strlen($struct_part . '__'));
+                                $map = [$tp[0] => $arg];
+                            }
+                        }
                         if ($map !== null) {
                             $mangled = $this->mangleStruct($struct_part, $map);
                             return new CallNode("$mangled::$method_name", $args, $expr->line);
@@ -1032,7 +1066,7 @@ class Monomorphizer {
         if ($expr instanceof StructLitNode) {
             $fields = [];
             foreach ($expr->fields as $f) {
-                $fields[] = ['name' => $f['name'], 'value' => $this->rewriteExpr($f['value'])];
+                $fields[] = ['name' => $f['name'], 'value' => $this->rewriteExpr($f['value'], null)];
             }
             $base = $this->stripGeneric($expr->struct_name);
             if (isset($this->generic_structs[$base])) {
@@ -1058,49 +1092,49 @@ class Monomorphizer {
         }
         if ($expr instanceof MethodCallNode) {
             $args = [];
-            foreach ($expr->args as $a) $args[] = $this->rewriteExpr($a);
-            return new MethodCallNode($this->rewriteExpr($expr->receiver), $expr->method_name, $args, $expr->line);
+            foreach ($expr->args as $a) $args[] = $this->rewriteExpr($a, null);
+            return new MethodCallNode($this->rewriteExpr($expr->receiver, null), $expr->method_name, $args, $expr->line);
         }
         if ($expr instanceof BinaryOpNode) {
             return new BinaryOpNode(
-                $this->rewriteExpr($expr->left), $expr->op,
-                $this->rewriteExpr($expr->right), $expr->line
+                $this->rewriteExpr($expr->left, null), $expr->op,
+                $this->rewriteExpr($expr->right, null), $expr->line
             );
         }
         if ($expr instanceof UnaryOpNode) {
-            return new UnaryOpNode($expr->op, $this->rewriteExpr($expr->operand), $expr->line);
+            return new UnaryOpNode($expr->op, $this->rewriteExpr($expr->operand, null), $expr->line);
         }
         if ($expr instanceof BorrowNode) {
-            return new BorrowNode($this->rewriteExpr($expr->operand), $expr->mutable, $expr->line);
+            return new BorrowNode($this->rewriteExpr($expr->operand, null), $expr->mutable, $expr->line);
         }
         if ($expr instanceof DerefNode) {
-            return new DerefNode($this->rewriteExpr($expr->operand), $expr->line);
+            return new DerefNode($this->rewriteExpr($expr->operand, null), $expr->line);
         }
         if ($expr instanceof FieldAccessNode) {
-            return new FieldAccessNode($this->rewriteExpr($expr->object), $expr->field_name, $expr->line);
+            return new FieldAccessNode($this->rewriteExpr($expr->object, null), $expr->field_name, $expr->line);
         }
         if ($expr instanceof TupleLitNode) {
             $elements = [];
-            foreach ($expr->elements as $e) $elements[] = $this->rewriteExpr($e);
+            foreach ($expr->elements as $e) $elements[] = $this->rewriteExpr($e, null);
             return new TupleLitNode($elements, $expr->line);
         }
         if ($expr instanceof TupleIndexNode) {
-            return new TupleIndexNode($this->rewriteExpr($expr->object), $expr->index, $expr->line);
+            return new TupleIndexNode($this->rewriteExpr($expr->object, null), $expr->index, $expr->line);
         }
         if ($expr instanceof CastNode) {
-            return new CastNode($this->rewriteExpr($expr->expr), $this->rewriteTypeName($expr->target_type), $expr->line);
+            return new CastNode($this->rewriteExpr($expr->expr, null), $this->rewriteTypeName($expr->target_type), $expr->line);
         }
         if ($expr instanceof IndexNode) {
-            return new IndexNode($this->rewriteExpr($expr->object), $this->rewriteExpr($expr->index), $expr->line);
+            return new IndexNode($this->rewriteExpr($expr->object, null), $this->rewriteExpr($expr->index, null), $expr->line);
         }
         if ($expr instanceof IfNode) {
-            return $this->rewriteStmt($expr);
+            return $this->rewriteStmt($expr, null);
         }
         if ($expr instanceof IfLetNode) {
-            return $this->rewriteStmt($expr);
+            return $this->rewriteStmt($expr, null);
         }
         if ($expr instanceof MatchNode) {
-            return $this->rewriteStmt($expr);
+            return $this->rewriteStmt($expr, null);
         }
         return $expr;
     }

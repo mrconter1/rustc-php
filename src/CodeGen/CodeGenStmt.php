@@ -95,7 +95,8 @@ trait CodeGenStmt {
             $base = $obj_type;
             if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
             elseif (str_starts_with($base, '&')) $base = substr($base, 1);
-            if ($base === 'alloc__VecI32') {
+            $elem_size = $this->vecElementSize($base);
+            if ($elem_size !== null) {
                 $is_ref = false;
                 if ($stmt->object instanceof IdentNode && isset($this->vars[$stmt->object->name])) {
                     $raw_type = $this->vars[$stmt->object->name]['type'];
@@ -113,7 +114,12 @@ trait CodeGenStmt {
                 $this->generateExpr($stmt->index);
                 $this->asm->mov(X86::RCX, X86::RAX);
                 $this->asm->pop(X86::RAX);
-                $this->asm->imul_imm8(X86::RCX, X86::RCX, 8);
+                if ($elem_size <= 127) {
+                    $this->asm->imul_imm8(X86::RCX, X86::RCX, $elem_size);
+                } else {
+                    $this->asm->mov_imm32(X86::R8, $elem_size);
+                    $this->asm->imul(X86::RCX, X86::R8);
+                }
                 $this->asm->add(X86::RAX, X86::RCX);
                 $this->asm->push(X86::RAX);
                 $this->generateExpr($stmt->value);
