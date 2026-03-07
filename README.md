@@ -45,18 +45,28 @@ wsl ./main; echo $?
 - `String` (heap string, move semantics)
 - `&str` and string slice indexing (`s[0]`)
 - `&T`, `&mut T` references with borrow checking
+- Raw pointers `*const T` and `*mut T`
 - Structs (named fields, field access, method calls)
+- Tuples and tuple destructuring
 - Enums with optional tuple payloads and `match`
 - Unit type `()` in expressions, return types, and generic arguments
 - Generics on functions, structs, and `impl` blocks
 - Builtin `Option<T>` and `Result<T, E>` with `Some`/`None`, `Ok`/`Err` (no source definitions required)
+- Builtin `Box<T>` (`Box::new`, deref)
+- `alloc::VecI32` (struct with `ptr`/`cap`/`len`, `VecI32::new()`, `push`, indexing `v[i]` and `v[i] = x`)
 
 **Control flow**
 - `if` / `else` (including as expressions)
-- `while`, `loop`, `break`, `continue`
+- `if let` and `while let`
+- `while`, `loop`, `break`, `continue` (including break level)
 - `for x in start..end` (range iteration)
-- `match` with enum arms and wildcard `_`
+- `match` with enum arms, int literals, and wildcard `_`
 - `return`
+
+**Heap and allocation**
+- Heap runtime (mmap + bump allocator, free-list for dealloc/realloc)
+- `alloc` crate: `alloc()`, `dealloc()`, `realloc()` (only callable from inside the `alloc` crate)
+- `alloc::VecI32` as above
 
 **Functions and closures**
 - Free functions with multiple parameters and explicit return types
@@ -70,11 +80,13 @@ wsl ./main; echo $?
 - Move semantics for non-`Copy` types
 - Borrow and mutable borrow checking
 - `Copy` inference for `i32`, `bool`, `&T`, and all-copy structs/enums
+- Compound assignment (`+=`, `-=`, `*=`, `/=`) for variables, derefs, and fields
 
 **Modules and syntax**
 - `mod name;` declarations with file-based module resolution
 - `pub` visibility on functions, structs, and fields
 - `use` paths for cross-module imports
+- Top-level `const` and `static` items
 - Attributes `#[...]` and `#![...]` (parsed and skipped)
 
 **Output**
@@ -101,15 +113,12 @@ Test cases live in `tests/cases/` organized into `fundamentals/valid/`, `fundame
 
 Roughly in order of impact:
 
-1. Compound assignment operators (`+=`, `-=`, `*=`, `/=`)
-2. Tuples and tuple destructuring
-3. `Vec<T>` and heap allocation
-4. `f32` / `f64` floating point
-5. `const` and `static` items
-6. The `?` operator (Result is supported; `?` is not)
-7. Closures as function arguments (`fn apply(f: impl Fn(i32) -> i32)`)
-8. Zero-parameter closures (`|| expr`)
-9. Pattern matching beyond single-level enum variants
-10. Multi-format `println!` (only `"{}"` with one argument is supported)
-11. Lifetimes (borrow checker is simplified — no lifetime annotations)
-12. Additional signed integer types (`i8`, `i16`, `i64`, `i128`)
+1. Generic `Vec<T>` and user-callable `alloc()` outside the `alloc` crate (heap and `alloc::VecI32` are supported)
+2. `f32` / `f64` floating point
+3. The `?` operator (Result is supported; `?` is not)
+4. Closures as function arguments (`fn apply(f: impl Fn(i32) -> i32)`)
+5. Zero-parameter closures (`|| expr`)
+6. Pattern matching beyond single-level enum variants
+7. Multi-format `println!` (only `"{}"` with one argument is supported)
+8. Lifetimes (borrow checker is simplified — no lifetime annotations)
+9. Additional signed integer types (`i8`, `i16`, `i64`, `i128`)
