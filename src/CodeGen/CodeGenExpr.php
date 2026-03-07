@@ -48,7 +48,7 @@ trait CodeGenExpr {
         if ($expr instanceof TupleLitNode) {
             $el = $expr->elements;
             if (count($el) > 2) {
-                throw new RuntimeException("Only 2-element tuples supported in codegen on line {$expr->line}");
+                throw new RuntimeException("Only 2-element tuples supported in codegen at line {$expr->line}");
             }
             if (count($el) === 0) return;
             $this->generateExpr($el[0]);
@@ -80,7 +80,7 @@ trait CodeGenExpr {
                 $this->asm->load(X86::RAX, X86::RAX, 0);
                 return;
             } else {
-                throw new RuntimeException("Undefined variable '{$expr->name}' on line {$expr->line}");
+                throw new RuntimeException("Undefined variable '{$expr->name}' at line {$expr->line}");
             }
             if ($this->isRawPointerType($var['type'])) {
                 return;
@@ -158,7 +158,7 @@ trait CodeGenExpr {
             if ($expr->operand instanceof IdentNode) {
                 $name = $expr->operand->name;
                 if (!isset($this->vars[$name])) {
-                    throw new RuntimeException("Undefined variable '$name' on line {$expr->line}");
+                    throw new RuntimeException("Undefined variable '$name' at line {$expr->line}");
                 }
                 $var = $this->vars[$name];
                 $this->asm->load(X86::RAX, X86::RBP, -$var['offset']);
@@ -189,7 +189,7 @@ trait CodeGenExpr {
             if ($expr->operand instanceof DerefNode && $expr->operand->operand instanceof IdentNode) {
                 $name = $expr->operand->operand->name;
                 if (!isset($this->vars[$name])) {
-                    throw new RuntimeException("Undefined variable '$name' on line {$expr->line}");
+                    throw new RuntimeException("Undefined variable '$name' at line {$expr->line}");
                 }
                 $var = $this->vars[$name];
                 if ($var['type'] === 'String') {
@@ -205,11 +205,11 @@ trait CodeGenExpr {
                 }
             }
             if (!($expr->operand instanceof IdentNode)) {
-                throw new RuntimeException("Can only borrow variables on line {$expr->line}");
+                throw new RuntimeException("Can only borrow variables at line {$expr->line}");
             }
             $name = $expr->operand->name;
             if (!isset($this->vars[$name])) {
-                throw new RuntimeException("Undefined variable '$name' on line {$expr->line}");
+                throw new RuntimeException("Undefined variable '$name' at line {$expr->line}");
             }
             $var = $this->vars[$name];
             $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
@@ -265,7 +265,7 @@ trait CodeGenExpr {
                 case '<=': $this->emitCmp(X86::CC_LE); break;
                 case '>=': $this->emitCmp(X86::CC_GE); break;
                 default:
-                    throw new RuntimeException("Unknown operator '{$expr->op}' on line {$expr->line}");
+                    throw new RuntimeException("Unknown operator '{$expr->op}' at line {$expr->line}");
             }
             return;
         }
@@ -273,7 +273,7 @@ trait CodeGenExpr {
         if ($expr instanceof CallNode) {
             if ($expr->name === 'exit') {
                 if (count($expr->args) !== 1) {
-                    throw new RuntimeException("exit() takes exactly 1 argument on line {$expr->line}");
+                    throw new RuntimeException("exit() takes exactly 1 argument at line {$expr->line}");
                 }
                 $this->generateExpr($expr->args[0]);
                 $this->asm->mov(X86::RDI, X86::RAX);
@@ -284,7 +284,7 @@ trait CodeGenExpr {
 
             $n = count($expr->args);
             if ($n > 6) {
-                throw new RuntimeException("Functions with more than 6 arguments are not supported on line {$expr->line}");
+                throw new RuntimeException("Functions with more than 6 arguments are not supported at line {$expr->line}");
             }
 
             $sig = $this->func_sigs[$expr->name] ?? null;
@@ -333,7 +333,7 @@ trait CodeGenExpr {
             $n = count($expr->args);
             $total_args = $n + 1;
             if ($total_args > 6) {
-                throw new RuntimeException("Methods with more than 6 total arguments are not supported on line {$expr->line}");
+                throw new RuntimeException("Methods with more than 6 total arguments are not supported at line {$expr->line}");
             }
 
             $reg_idx = 0;
@@ -352,11 +352,11 @@ trait CodeGenExpr {
                 $raw_receiver_ref = str_starts_with($raw_type, '&') || str_starts_with($raw_type, '&mut ');
             }
             if (!$raw_receiver_ref && $self_param_type === "&$base_type" && $receiver_type === $base_type) {
-                if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow only supported for variables on line {$expr->line}");
+                if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow only supported for variables at line {$expr->line}");
                 $var = $this->vars[$expr->receiver->name];
                 $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
             } elseif (!$raw_receiver_ref && $self_param_type === "&mut $base_type" && $receiver_type === $base_type) {
-                if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow-mut only supported for variables on line {$expr->line}");
+                if (!($expr->receiver instanceof IdentNode)) throw new RuntimeException("Auto-borrow-mut only supported for variables at line {$expr->line}");
                 $var = $this->vars[$expr->receiver->name];
                 $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
             } else {
@@ -428,7 +428,7 @@ trait CodeGenExpr {
 
     private function generateIfExpr(IfNode $node): void {
         if ($node->else_body === null) {
-            throw new RuntimeException("if expression requires else branch on line {$node->line}");
+            throw new RuntimeException("if expression requires else branch at line {$node->line}");
         }
 
         $this->generateExpr($node->condition);
@@ -444,7 +444,7 @@ trait CodeGenExpr {
 
     private function generateIfLetExpr(IfLetNode $node): void {
         if ($node->else_body === null) {
-            throw new RuntimeException("if let expression requires else branch on line {$node->line}");
+            throw new RuntimeException("if let expression requires else branch at line {$node->line}");
         }
         $subject_slot = $this->if_let_subject_slots[spl_object_id($node)];
         $enum_type = $subject_slot['enum_type'];

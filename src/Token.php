@@ -83,16 +83,22 @@ class Token {
     public string $type;
     public mixed  $value;
     public int    $line;
+    public int    $column;
 
-    public function __construct(string $type, mixed $value, int $line) {
-        $this->type  = $type;
-        $this->value = $value;
-        $this->line  = $line;
+    public function __construct(string $type, mixed $value, int $line, int $column = 1) {
+        $this->type   = $type;
+        $this->value  = $value;
+        $this->line   = $line;
+        $this->column = $column;
+    }
+
+    public function location(): string {
+        return "line {$this->line}, column {$this->column}";
     }
 
     public function __toString(): string {
         return $this->value !== null
-            ? "{$this->type}({$this->value})@{$this->line}"
-            : "{$this->type}@{$this->line}";
+            ? "{$this->type}({$this->value})@{$this->line}:{$this->column}"
+            : "{$this->type}@{$this->line}:{$this->column}";
     }
 }

@@ -520,7 +520,7 @@ class Parser {
     private function parseMacroCall(): mixed {
         $token = $this->expect(Token::MACRO);
         if ($token->value !== 'println') {
-            throw new RuntimeException("Unknown macro '{$token->value}!' on line {$token->line}");
+            throw new RuntimeException("Unknown macro '{$token->value}!' at " . $token->location());
         }
         return $this->parsePrintln($token->line);
     }
@@ -549,7 +549,7 @@ class Parser {
         $expected_args = count($format_parts) - 1;
         if (count($args) !== $expected_args) {
             throw new RuntimeException(
-                "println! expected $expected_args arguments, got " . count($args) . " on line $line"
+                "println! expected $expected_args arguments, got " . count($args) . " at line $line"
             );
         }
 
@@ -1039,7 +1039,8 @@ class Parser {
         }
 
         throw new RuntimeException(
-            "Unexpected token {$token->type}({$token->value}) on line {$token->line}"
+            "Unexpected token " . ($token->value !== null ? "{$token->type}({$token->value})" : $token->type)
+            . " at " . $token->location()
         );
     }
 
@@ -1113,7 +1114,7 @@ class Parser {
                 $this->pos++;
                 return $ref . '*mut ' . $this->parseType();
             }
-            throw new RuntimeException("Expected *const or *mut in raw pointer type on line " . $this->current()->line);
+            throw new RuntimeException("Expected *const or *mut in raw pointer type at " . $this->current()->location());
         }
         if ($this->check(Token::LPAREN)) {
             $this->pos++;
@@ -1199,7 +1200,8 @@ class Parser {
         $token = $this->current();
         if ($token->type !== $type) {
             throw new RuntimeException(
-                "Expected $type but got {$token->type}({$token->value}) on line {$token->line}"
+                "Expected $type but got " . ($token->value !== null ? "{$token->type}({$token->value})" : $token->type)
+                . " at " . $token->location()
             );
         }
         $this->pos++;

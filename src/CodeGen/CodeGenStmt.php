@@ -122,7 +122,7 @@ trait CodeGenStmt {
 
         if ($stmt instanceof BreakNode) {
             if (empty($this->loop_stack)) {
-                throw new RuntimeException("break outside of loop on line {$stmt->line}");
+                throw new RuntimeException("break outside of loop at line {$stmt->line}");
             }
             $ctx = &$this->loop_stack[count($this->loop_stack) - 1];
             $ctx['break_patches'][] = $this->asm->jmp_rel32();
@@ -131,7 +131,7 @@ trait CodeGenStmt {
 
         if ($stmt instanceof ContinueNode) {
             if (empty($this->loop_stack)) {
-                throw new RuntimeException("continue outside of loop on line {$stmt->line}");
+                throw new RuntimeException("continue outside of loop at line {$stmt->line}");
             }
             $ctx = $this->loop_stack[count($this->loop_stack) - 1];
             $this->asm->jmp_to($ctx['continue_target']);
@@ -198,7 +198,7 @@ trait CodeGenStmt {
             }
             return;
         }
-        throw new RuntimeException("Compound assignment target not supported on line {$stmt->line}");
+        throw new RuntimeException("Compound assignment target not supported at line {$stmt->line}");
     }
 
     private function emitCompoundOp(string $op, int $line): void {
@@ -223,7 +223,7 @@ trait CodeGenStmt {
                 $this->asm->idiv(X86::RCX);
                 break;
             default:
-                throw new RuntimeException("Unknown compound operator '$op' on line $line");
+                throw new RuntimeException("Unknown compound operator '$op' at line $line");
         }
     }
 

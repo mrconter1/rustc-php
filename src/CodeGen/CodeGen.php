@@ -355,7 +355,7 @@ class CodeGen {
         if ($s->value instanceof IntLitNode) {
             return $this->addDataQuad($s->value->value);
         }
-        throw new RuntimeException("Static '{$s->name}' initializer must be an integer literal on line {$s->line}");
+        throw new RuntimeException("Static '{$s->name}' initializer must be an integer literal at line {$s->line}");
     }
 
     private function generateFunction(FunctionNode $fn, ?string $mangled_name = null, ?string $struct_name = null): void {
@@ -428,11 +428,11 @@ class CodeGen {
                 $type = $stmt->type_name ?? $this->exprType($stmt->value);
                 if (!empty($stmt->bindings)) {
                     if (count($stmt->bindings) > 2) {
-                        throw new RuntimeException("Only 2-element tuple destructuring supported on line {$stmt->line}");
+                        throw new RuntimeException("Only 2-element tuple destructuring supported at line {$stmt->line}");
                     }
                     $element_types = $this->tupleElementTypes($type);
                     if ($element_types === null || count($element_types) !== count($stmt->bindings)) {
-                        throw new RuntimeException("Tuple destructuring type mismatch on line {$stmt->line}");
+                        throw new RuntimeException("Tuple destructuring type mismatch at line {$stmt->line}");
                     }
                     $base = $this->stack_size;
                     $slots = [];
