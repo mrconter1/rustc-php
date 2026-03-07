@@ -36,6 +36,10 @@ class CodeGen {
     private array $const_exprs = [];
     private array $static_offsets = [];
 
+    private int $heap_start_off;
+    private int $heap_cur_off;
+    private int $heap_end_off;
+
     private const ARG_REGS = [X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9];
 
     private const INT_PRIMITIVES = ['i32', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize'];
@@ -48,6 +52,9 @@ class CodeGen {
         $this->code_base_addr = $code_base_addr;
         $this->asm->reset();
         $this->data = '';
+        $this->heap_start_off = $this->addDataQuad(0);
+        $this->heap_cur_off   = $this->addDataQuad(0);
+        $this->heap_end_off   = $this->addDataQuad(0);
         $this->data_patches = [];
         $this->call_patches = [];
         $this->func_addrs = [];
@@ -126,6 +133,7 @@ class CodeGen {
         }
 
         $this->emitEntryPoint();
+        $this->emitHeapRuntime();
 
         foreach ($program->functions as $fn) {
             $this->generateFunction($fn);
@@ -314,7 +322,45 @@ class CodeGen {
         }
     }
 
+    private function emitHeapRuntime(): void {
+        $this->func_addrs['heap_init'] = $this->asm->pos();
+        $this->asm->xor_(X86::RDI, X86::RDI);
+        $this->asm->mov_imm32(X86::RSI, 4 * 1024 * 1024);
+        $this->asm->mov_imm32(X86::RDX, 3);
+        $this->asm->mov_imm32(X86::R10, 0x22);
+        $this->asm->mov_imm32(X86::R8, -1);
+        $this->asm->mov_imm32(X86::R9, 0);
+        $this->asm->mov_imm32(X86::RAX, 9);
+        $this->asm->syscall();
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_start_off];
+        $this->asm->store(X86::RSI, 0, X86::RAX);
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_cur_off];
+        $this->asm->store(X86::RSI, 0, X86::RAX);
+        $this->asm->mov(X86::RCX, X86::RAX);
+        $this->asm->add_imm32(X86::RCX, 4 * 1024 * 1024);
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_end_off];
+        $this->asm->store(X86::RSI, 0, X86::RCX);
+        $this->asm->ret();
+
+        $this->func_addrs['alloc'] = $this->asm->pos();
+        $this->asm->mov(X86::RCX, X86::RDI);
+        $this->asm->add_imm8(X86::RCX, 7);
+        $this->asm->and_imm32(X86::RCX, 0xFFFFFFF8);
+        $p = $this->asm->mov_imm64(X86::RSI);
+        $this->data_patches[] = [$p, $this->heap_cur_off];
+        $this->asm->load(X86::RAX, X86::RSI, 0);
+        $this->asm->load(X86::RDX, X86::RSI, 0);
+        $this->asm->add(X86::RDX, X86::RCX);
+        $this->asm->store(X86::RSI, 0, X86::RDX);
+        $this->asm->ret();
+    }
+
     private function emitEntryPoint(): void {
+        $patch_pos = $this->asm->call_rel32();
+        $this->call_patches[] = [$patch_pos, 'heap_init'];
         $patch_pos = $this->asm->call_rel32();
         $this->call_patches[] = [$patch_pos, 'main'];
         $this->asm->mov(X86::RDI, X86::RAX);

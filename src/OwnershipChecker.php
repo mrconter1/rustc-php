@@ -917,6 +917,9 @@ $is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arm
                 $this->checkExpr($arg);
             }
 
+            if ($expr->name === 'alloc') {
+                throw new RuntimeException("Undefined function 'alloc'" . $this->loc($expr) . "");
+            }
             if ($expr->name !== 'exit' && isset($this->func_sigs[$expr->name])) {
                 $sig = $this->func_sigs[$expr->name];
                 $expected = count($sig['params']);

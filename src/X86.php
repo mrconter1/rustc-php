@@ -3,7 +3,7 @@
 class X86 {
     const RAX = 0; const RCX = 1; const RDX = 2; const RBX = 3;
     const RSP = 4; const RBP = 5; const RSI = 6; const RDI = 7;
-    const R8  = 8; const R9  = 9;
+    const R8  = 8; const R9  = 9; const R10 = 10;
 
     const AL = 0; const CL = 1; const DL = 2;
 
@@ -296,10 +296,24 @@ class X86 {
     // ret
     public function ret(): void { $this->emit("\xC3"); }
 
+    // add reg64, imm32
+    public function add_imm32(int $reg, int $val): void {
+        $rex = 0x48 | ($reg >> 3);
+        $modrm = 0xC0 | ($reg & 7);
+        $this->emit(chr($rex) . "\x81" . chr($modrm) . pack('V', $val));
+    }
+
     // sub reg64, imm32
     public function sub_imm32(int $reg, int $val): void {
         $rex = 0x48 | ($reg >> 3);
         $modrm = 0xE8 | ($reg & 7);
+        $this->emit(chr($rex) . "\x81" . chr($modrm) . pack('V', $val));
+    }
+
+    // and reg64, imm32 (sign-extended)
+    public function and_imm32(int $reg, int $val): void {
+        $rex = 0x48 | ($reg >> 3);
+        $modrm = 0xE0 | ($reg & 7);
         $this->emit(chr($rex) . "\x81" . chr($modrm) . pack('V', $val));
     }
 

@@ -51,7 +51,7 @@ class Elf {
 
     private function programHeader(int $file_size): string {
         return pack('V', 1)                  // Type: PT_LOAD
-             . pack('V', 5)                  // Flags: PF_R | PF_X (read + execute)
+             . pack('V', 7)                  // Flags: PF_R | PF_W | PF_X (read + write + execute)
              . pack('P', 0)                  // File offset: load from start of file
              . pack('P', self::LOAD_ADDR)    // Virtual address
              . pack('P', self::LOAD_ADDR)    // Physical address
