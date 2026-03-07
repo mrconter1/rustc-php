@@ -353,6 +353,12 @@ trait CodeGenStmt {
         $this->asm->cmp(X86::RAX, X86::RCX);
         $jne_else = $this->asm->jne_rel32();
 
+        if ($node->literal_value !== null) {
+            $this->asm->load(X86::RAX, X86::RBP, -($subject_slot['offset'] - 8));
+            $this->asm->mov_imm32(X86::RCX, $node->literal_value);
+            $this->asm->cmp(X86::RAX, X86::RCX);
+            $jne_else2 = $this->asm->jne_rel32();
+        }
         if ($node->binding !== null) {
             $binding_slot = $this->if_let_binding_slots[spl_object_id($node)];
             $this->asm->load(X86::RCX, X86::RBP, -($subject_slot['offset'] - 8));
@@ -368,6 +374,9 @@ trait CodeGenStmt {
         $jmp_end = $node->else_body !== null ? $this->asm->jmp_rel32() : null;
         $else_pos = $this->asm->pos();
         $this->asm->patch32($jne_else, $else_pos - $jne_else - 4);
+        if ($node->literal_value !== null) {
+            $this->asm->patch32($jne_else2, $else_pos - $jne_else2 - 4);
+        }
 
         if ($node->else_body !== null) {
             $this->generateBody($node->else_body);

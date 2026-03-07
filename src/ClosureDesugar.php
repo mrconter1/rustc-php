@@ -157,7 +157,8 @@ class ClosureDesugar {
                 $stmt->binding,
                 $then_body,
                 $else_body,
-                $stmt->line
+                $stmt->line,
+                $stmt->literal_value
             );
         }
 
@@ -186,7 +187,7 @@ class ClosureDesugar {
                 if ($arm->binding !== null) $asc[$arm->binding] = 'i32';
                 $arms[] = new MatchArmNode(
                     $arm->is_wildcard, $arm->enum_name, $arm->variant_name,
-                    $arm->binding, $this->rewriteBody($arm->body, $asc, $acv), $arm->line
+                    $arm->binding, $this->rewriteBody($arm->body, $asc, $acv), $arm->line, $arm->int_lit
                 );
             }
             return new MatchNode($subject, $arms, $stmt->line);
@@ -299,7 +300,8 @@ class ClosureDesugar {
                 $expr->binding,
                 $then_body,
                 $else_body,
-                $expr->line
+                $expr->line,
+                $expr->literal_value
             );
         }
 
@@ -546,7 +548,8 @@ class ClosureDesugar {
                 $stmt->binding,
                 $this->rewriteClosureBody($stmt->then_body, $captures, $lb),
                 $stmt->else_body !== null ? $this->rewriteClosureBody($stmt->else_body, $captures, $lb) : null,
-                $stmt->line
+                $stmt->line,
+                $stmt->literal_value
             );
         }
         if ($stmt instanceof WhileLetNode) {
@@ -637,7 +640,8 @@ class ClosureDesugar {
                 $expr->binding,
                 $this->rewriteClosureBody($expr->then_body, $captures, $lb),
                 $expr->else_body !== null ? $this->rewriteClosureBody($expr->else_body, $captures, $lb) : null,
-                $expr->line
+                $expr->line,
+                $expr->literal_value
             );
         }
         return $expr;

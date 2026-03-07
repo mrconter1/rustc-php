@@ -745,7 +745,8 @@ class Monomorphizer {
                 $stmt->binding,
                 $this->substituteBody($stmt->then_body, $map),
                 $stmt->else_body !== null ? $this->substituteBody($stmt->else_body, $map) : null,
-                $stmt->line
+                $stmt->line,
+                $stmt->literal_value
             );
         }
         if ($stmt instanceof WhileLetNode) {
@@ -767,7 +768,7 @@ class Monomorphizer {
             foreach ($stmt->arms as $arm) {
                 $arms[] = new MatchArmNode(
                     $arm->is_wildcard, $arm->enum_name, $arm->variant_name,
-                    $arm->binding, $this->substituteBody($arm->body, $map), $arm->line
+                    $arm->binding, $this->substituteBody($arm->body, $map), $arm->line, $arm->int_lit
                 );
             }
             return new MatchNode($this->substituteExpr($stmt->subject, $map), $arms, $stmt->line);
@@ -945,7 +946,8 @@ class Monomorphizer {
                 $stmt->binding,
                 $this->rewriteBody($stmt->then_body),
                 $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body) : null,
-                $stmt->line
+                $stmt->line,
+                $stmt->literal_value
             );
         }
         if ($stmt instanceof WhileLetNode) {
@@ -967,7 +969,7 @@ class Monomorphizer {
             foreach ($stmt->arms as $arm) {
                 $arms[] = new MatchArmNode(
                     $arm->is_wildcard, $arm->enum_name, $arm->variant_name,
-                    $arm->binding, $this->rewriteBody($arm->body), $arm->line
+                    $arm->binding, $this->rewriteBody($arm->body), $arm->line, $arm->int_lit
                 );
             }
             return new MatchNode($this->rewriteExpr($stmt->subject), $arms, $stmt->line);

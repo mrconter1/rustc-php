@@ -528,7 +528,8 @@ class ModuleResolver {
                 $stmt->binding,
                 $this->rewriteBody($stmt->then_body, $name_map, $prefix),
                 $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body, $name_map, $prefix) : null,
-                $stmt->line
+                $stmt->line,
+                $stmt->literal_value
             );
         }
         if ($stmt instanceof WhileLetNode) {
@@ -553,7 +554,7 @@ class ModuleResolver {
                 if ($en !== null && isset($name_map[$en])) $en = $name_map[$en];
                 $arms[] = new MatchArmNode(
                     $arm->is_wildcard, $en, $arm->variant_name,
-                    $arm->binding, $this->rewriteBody($arm->body, $name_map, $prefix), $arm->line
+                    $arm->binding, $this->rewriteBody($arm->body, $name_map, $prefix), $arm->line, $arm->int_lit
                 );
             }
             return new MatchNode($this->rewriteExpr($stmt->subject, $name_map, $prefix), $arms, $stmt->line);

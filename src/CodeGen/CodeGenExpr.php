@@ -220,15 +220,20 @@ trait CodeGenExpr {
                     return;
                 }
             }
-            if (!($expr->operand instanceof IdentNode)) {
-                throw new RuntimeException("Can only borrow variables at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
+            if ($expr->operand instanceof IdentNode) {
+                $name = $expr->operand->name;
+                if (!isset($this->vars[$name])) {
+                    throw new RuntimeException("Undefined variable '$name' at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
+                }
+                $var = $this->vars[$name];
+                $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
+                return;
             }
-            $name = $expr->operand->name;
-            if (!isset($this->vars[$name])) {
-                throw new RuntimeException("Undefined variable '$name' at line {$expr->line}, column " . (isset($expr->column) ? $expr->column : 1));
-            }
-            $var = $this->vars[$name];
-            $this->asm->lea(X86::RAX, X86::RBP, -$var['offset']);
+            $this->stack_size += 8;
+            $temp_offset = $this->stack_size;
+            $this->generateExpr($expr->operand);
+            $this->asm->store(X86::RBP, -$temp_offset, X86::RAX);
+            $this->asm->lea(X86::RAX, X86::RBP, -$temp_offset);
             return;
         }
 
@@ -476,6 +481,12 @@ trait CodeGenExpr {
         $this->asm->cmp(X86::RAX, X86::RCX);
         $jne_else = $this->asm->jne_rel32();
 
+        if ($node->literal_value !== null) {
+            $this->asm->load(X86::RAX, X86::RBP, -($subject_slot['offset'] - 8));
+            $this->asm->mov_imm32(X86::RCX, $node->literal_value);
+            $this->asm->cmp(X86::RAX, X86::RCX);
+            $jne_else2 = $this->asm->jne_rel32();
+        }
         if ($node->binding !== null) {
             $binding_slot = $this->if_let_binding_slots[spl_object_id($node)];
             $this->asm->load(X86::RCX, X86::RBP, -($subject_slot['offset'] - 8));
@@ -490,6 +501,9 @@ trait CodeGenExpr {
         $jmp_end = $this->asm->jmp_rel32();
         $else_pos = $this->asm->pos();
         $this->asm->patch32($jne_else, $else_pos - $jne_else - 4);
+        if ($node->literal_value !== null) {
+            $this->asm->patch32($jne_else2, $else_pos - $jne_else2 - 4);
+        }
         $this->generateBodyForExpr($node->else_body);
         $this->asm->patch32($jmp_end, $this->asm->pos() - $jmp_end - 4);
     }

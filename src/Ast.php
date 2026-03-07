@@ -115,13 +115,15 @@ class MatchArmNode {
     public ?string $binding;
     public array   $body;
     public int     $line;
-    public function __construct(bool $is_wildcard, ?string $enum_name, ?string $variant_name, ?string $binding, array $body, int $line) {
+    public ?int    $int_lit;
+    public function __construct(bool $is_wildcard, ?string $enum_name, ?string $variant_name, ?string $binding, array $body, int $line, ?int $int_lit = null) {
         $this->is_wildcard    = $is_wildcard;
         $this->enum_name      = $enum_name;
         $this->variant_name   = $variant_name;
         $this->binding        = $binding;
         $this->body           = $body;
         $this->line           = $line;
+        $this->int_lit        = $int_lit;
     }
 }
 
@@ -297,17 +299,19 @@ class IfLetNode {
     public ?string $enum_name;
     public string $variant_name;
     public ?string $binding;
+    public ?int    $literal_value;
     public array  $then_body;
     public ?array $else_body;
     public int    $line;
-    public function __construct(mixed $subject, ?string $enum_name, string $variant_name, ?string $binding, array $then_body, ?array $else_body, int $line) {
-        $this->subject     = $subject;
-        $this->enum_name   = $enum_name;
-        $this->variant_name = $variant_name;
-        $this->binding     = $binding;
-        $this->then_body   = $then_body;
-        $this->else_body   = $else_body;
-        $this->line        = $line;
+    public function __construct(mixed $subject, ?string $enum_name, string $variant_name, ?string $binding, array $then_body, ?array $else_body, int $line, ?int $literal_value = null) {
+        $this->subject       = $subject;
+        $this->enum_name     = $enum_name;
+        $this->variant_name  = $variant_name;
+        $this->binding       = $binding;
+        $this->literal_value = $literal_value;
+        $this->then_body     = $then_body;
+        $this->else_body     = $else_body;
+        $this->line          = $line;
     }
 }
 

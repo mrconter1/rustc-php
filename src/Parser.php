@@ -197,9 +197,13 @@ class Parser {
             $variant_name = null;
             $binding     = null;
 
+            $int_lit = null;
             if ($pat_token->type === Token::IDENT && $pat_token->value === '_') {
                 $this->pos++;
                 $is_wildcard = true;
+            } elseif ($pat_token->type === Token::INT_LIT) {
+                $this->pos++;
+                $int_lit = $pat_token->value;
             } else {
                 $enum_name    = $this->expect(Token::IDENT)->value;
                 if ($this->check(Token::DCOLON) && ($enum_name === 'Option' || $enum_name === 'Result')) {
@@ -237,7 +241,7 @@ class Parser {
                 if ($this->check(Token::COMMA)) $this->pos++;
             }
 
-            $arms[] = new MatchArmNode($is_wildcard, $enum_name, $variant_name, $binding, $body, $pat_token->line);
+            $arms[] = new MatchArmNode($is_wildcard, $enum_name, $variant_name, $binding, $body, $pat_token->line, $int_lit);
             if (!$is_wildcard && $this->check(Token::COMMA)) $this->pos++;
         }
         $this->expect(Token::RBRACE);
@@ -649,16 +653,22 @@ class Parser {
             $variant_name = $first;
         }
         $binding = null;
+        $literal_value = null;
         if ($this->check(Token::LPAREN)) {
             $this->pos++;
-            $binding = $this->expect(Token::IDENT)->value;
+            if ($this->check(Token::INT_LIT)) {
+                $literal_value = $this->current()->value;
+                $this->pos++;
+            } else {
+                $binding = $this->expect(Token::IDENT)->value;
+            }
             $this->expect(Token::RPAREN);
         }
-        return [$enum_name, $variant_name, $binding];
+        return [$enum_name, $variant_name, $binding, $literal_value];
     }
 
     private function parseIfLet(int $line): IfLetNode {
-        [$enum_name, $variant_name, $binding] = $this->parseLetPattern();
+        [$enum_name, $variant_name, $binding, $literal_value] = $this->parseLetPattern();
         $this->expect(Token::EQ);
         $subject = $this->parseExpr();
         $then_body = $this->parseBlock();
@@ -677,7 +687,7 @@ class Parser {
                 $else_body = $this->parseBlock();
             }
         }
-        return new IfLetNode($subject, $enum_name, $variant_name, $binding, $then_body, $else_body, $line);
+        return new IfLetNode($subject, $enum_name, $variant_name, $binding, $then_body, $else_body, $line, $literal_value);
     }
 
     private function parseWhile(int $line): WhileNode {
@@ -687,7 +697,7 @@ class Parser {
     }
 
     private function parseWhileLet(int $line): WhileLetNode {
-        [$enum_name, $variant_name, $binding] = $this->parseLetPattern();
+        [$enum_name, $variant_name, $binding, ] = $this->parseLetPattern();
         $this->expect(Token::EQ);
         $subject = $this->parseExpr();
         $body = $this->parseBlock();
@@ -904,7 +914,17 @@ class Parser {
                         return new EnumVariantNode($builtin_enum_type, $variant_name, $args, $token->line);
                     }
                 }
-                $this->pos--;
+                $variant_name = $this->expect(Token::IDENT)->value;
+                $args = [];
+                if ($this->check(Token::LPAREN)) {
+                    $this->pos++;
+                    while (!$this->check(Token::RPAREN)) {
+                        $args[] = $this->parseExpr();
+                        if ($this->check(Token::COMMA)) $this->pos++;
+                    }
+                    $this->expect(Token::RPAREN);
+                }
+                return new EnumVariantNode($token->value, $variant_name, $args, $token->line);
             }
             if ($this->check(Token::DCOLON) && in_array($token->value, $this->enum_names)) {
                 $this->expect(Token::DCOLON);

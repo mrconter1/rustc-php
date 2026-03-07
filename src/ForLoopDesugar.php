@@ -132,7 +132,7 @@ class ForLoopDesugar {
                         $arm->is_wildcard, $arm->enum_name, $arm->variant_name,
                         $arm->binding,
                         $this->replaceContinueWithIncrBreak($arm->body, $incr, $line, $replaceContinue),
-                        $arm->line
+                        $arm->line, $arm->int_lit
                     );
                 }
                 $out[] = new MatchNode($stmt->subject, $arms, $stmt->line);
@@ -141,7 +141,8 @@ class ForLoopDesugar {
                     $stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding,
                     $this->replaceContinueWithIncrBreak($stmt->then_body, $incr, $line, $replaceContinue),
                     $stmt->else_body !== null ? $this->replaceContinueWithIncrBreak($stmt->else_body, $incr, $line, $replaceContinue) : null,
-                    $stmt->line
+                    $stmt->line,
+                    $stmt->literal_value
                 );
             } elseif ($stmt instanceof WhileNode) {
                 $out[] = new WhileNode($stmt->condition, $this->replaceContinueWithIncrBreak($stmt->body, $incr, $line, $replaceContinue), $stmt->line);
@@ -165,7 +166,7 @@ class ForLoopDesugar {
         if ($stmt instanceof IfLetNode) {
             $then_body = $this->rewriteBody($stmt->then_body);
             $else_body = $stmt->else_body !== null ? $this->rewriteBody($stmt->else_body) : null;
-            return new IfLetNode($stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding, $then_body, $else_body, $stmt->line);
+            return new IfLetNode($stmt->subject, $stmt->enum_name, $stmt->variant_name, $stmt->binding, $then_body, $else_body, $stmt->line, $stmt->literal_value);
         }
         if ($stmt instanceof WhileNode) {
             return new WhileNode($stmt->condition, $this->rewriteBody($stmt->body), $stmt->line);
@@ -181,7 +182,7 @@ class ForLoopDesugar {
             foreach ($stmt->arms as $arm) {
                 $arms[] = new MatchArmNode(
                     $arm->is_wildcard, $arm->enum_name, $arm->variant_name,
-                    $arm->binding, $this->rewriteBody($arm->body), $arm->line
+                    $arm->binding, $this->rewriteBody($arm->body), $arm->line, $arm->int_lit
                 );
             }
             return new MatchNode($stmt->subject, $arms, $stmt->line);

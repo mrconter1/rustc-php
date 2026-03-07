@@ -640,6 +640,9 @@ class OwnershipChecker {
             if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
             $enum_type = $stmt->enum_name ?? $base_type;
+            if (!isset($this->enum_defs[$enum_type]) && (($stmt->enum_name === 'Option' && str_starts_with($base_type, 'Option<')) || ($stmt->enum_name === 'Result' && str_starts_with($base_type, 'Result<')))) {
+                $enum_type = $base_type;
+            }
             if (!isset($this->enum_defs[$enum_type])) {
                 throw new RuntimeException("Cannot match on non-enum type '$enum_type'" . $this->loc($stmt) . "");
             }
@@ -685,6 +688,9 @@ class OwnershipChecker {
             if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
             $enum_type = $stmt->enum_name ?? $base_type;
+            if (!isset($this->enum_defs[$enum_type]) && (($stmt->enum_name === 'Option' && str_starts_with($base_type, 'Option<')) || ($stmt->enum_name === 'Result' && str_starts_with($base_type, 'Result<')))) {
+                $enum_type = $base_type;
+            }
             if (!isset($this->enum_defs[$enum_type])) {
                 throw new RuntimeException("Cannot match on non-enum type '$enum_type'" . $this->loc($stmt) . "");
             }
@@ -725,14 +731,16 @@ class OwnershipChecker {
             if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
             elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
 
-            if (!isset($this->enum_defs[$base_type])) {
+            $has_int_arm = array_reduce($stmt->arms, fn($carry, $a) => $carry || $a->int_lit !== null, false);
+$is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arms, fn($carry, $a) => $carry && ($a->is_wildcard || $a->int_lit !== null), true));
+            if (!$is_int_match && !isset($this->enum_defs[$base_type])) {
                 throw new RuntimeException("Cannot match on non-enum type '$base_type'" . $this->loc($stmt) . "");
             }
 
             $saved = $this->vars;
             foreach ($stmt->arms as $arm) {
                 $this->vars = $saved;
-                if (!$arm->is_wildcard) {
+                if (!$arm->is_wildcard && $arm->int_lit === null) {
                     if (!isset($this->enum_defs[$base_type]['variants'][$arm->variant_name])) {
                         throw new RuntimeException("Enum '$base_type' has no variant '{$arm->variant_name}'" . $this->loc($arm) . "");
                     }
@@ -815,11 +823,22 @@ class OwnershipChecker {
             foreach ($expr->args as $arg) {
                 $this->checkExpr($arg);
             }
-            if (!isset($this->enum_defs[$expr->enum_name])) {
+            $enum_type = $expr->enum_name;
+            if (!isset($this->enum_defs[$enum_type]) && ($expr->enum_name === 'Option' && count($expr->args) === 1)) {
+                $enum_type = 'Option<' . $this->exprType($expr->args[0]) . '>';
+                $this->registerBuiltinEnumIf($enum_type);
+                $expr->enum_name = $enum_type;
+            }
+            if (!isset($this->enum_defs[$enum_type]) && ($expr->enum_name === 'Result' && count($expr->args) === 2)) {
+                $enum_type = 'Result<' . $this->exprType($expr->args[0]) . ',' . $this->exprType($expr->args[1]) . '>';
+                $this->registerBuiltinEnumIf($enum_type);
+                $expr->enum_name = $enum_type;
+            }
+            if (!isset($this->enum_defs[$enum_type])) {
                 throw new RuntimeException("Undefined enum '{$expr->enum_name}'" . $this->loc($expr) . "");
             }
-            if (!isset($this->enum_defs[$expr->enum_name]['variants'][$expr->variant_name])) {
-                throw new RuntimeException("Enum '{$expr->enum_name}' has no variant '{$expr->variant_name}'" . $this->loc($expr) . "");
+            if (!isset($this->enum_defs[$enum_type]['variants'][$expr->variant_name])) {
+                throw new RuntimeException("Enum '$enum_type' has no variant '{$expr->variant_name}'" . $this->loc($expr) . "");
             }
             return;
         }
@@ -1028,7 +1047,14 @@ class OwnershipChecker {
             return 'i32';
         }
         if ($expr instanceof StructLitNode) return $expr->struct_name;
-        if ($expr instanceof EnumVariantNode) return $expr->enum_name;
+        if ($expr instanceof EnumVariantNode) {
+            if (($expr->enum_name === 'Option' || $expr->enum_name === 'Result') && count($expr->args) >= 1) {
+                $inner = $this->exprType($expr->args[0]);
+                if ($expr->enum_name === 'Option') return 'Option<' . $inner . '>';
+                if ($expr->enum_name === 'Result' && count($expr->args) >= 2) return 'Result<' . $inner . ',' . $this->exprType($expr->args[1]) . '>';
+            }
+            return $expr->enum_name;
+        }
         if ($expr instanceof MatchNode) {
             foreach ($expr->arms as $arm) {
                 if (!empty($arm->body)) {

@@ -87,6 +87,12 @@ function parseHeader(string $file): array {
         if (preg_match('/^\/\/\s*stdout:\s*(.*)/', $line, $m)) {
             $header['stdout'][] = $m[1];
         }
+        if (preg_match('/^\/\/\s*timeout:\s*(\d+)/', $line, $m)) {
+            $header['timeout'] = (int)$m[1];
+        }
+        if (preg_match('/^\/\/\s*expect_timeout\b/', $line)) {
+            $header['expect_timeout'] = true;
+        }
     }
     return $header;
 }
@@ -113,7 +119,17 @@ function runTest(string $file, array $header, string $binary): string|true {
     }
 
     $binary_name = basename($binary);
-    exec("wsl ./$binary_name 2>&1", $run_out, $actual_exit);
+    $timeout_sec = $header['timeout'] ?? 10;
+    $expect_timeout = !empty($header['expect_timeout']);
+    $cmd = $timeout_sec > 0 ? "wsl timeout $timeout_sec ./$binary_name 2>&1" : "wsl ./$binary_name 2>&1";
+    exec($cmd, $run_out, $actual_exit);
+
+    if ($expect_timeout) {
+        if ($actual_exit !== 124 && $actual_exit !== 143) {
+            return "expected timeout (exit 124 or 143), got $actual_exit";
+        }
+        return true;
+    }
 
     $expected_exit = (int)($header['exit'] ?? 0);
     if ($actual_exit !== $expected_exit) {

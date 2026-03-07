@@ -490,12 +490,15 @@ class CodeGen {
 
     private function registerMatchSlot(MatchNode $stmt): void {
         $subject_type = $this->exprType($stmt->subject);
-        $has_payload  = isset($this->enum_defs[$subject_type]) && $this->enum_defs[$subject_type]['has_payload'];
-        $this->stack_size += 16;
+        $has_int_arm = array_reduce($stmt->arms, fn($carry, $a) => $carry || $a->int_lit !== null, false);
+        $is_int_match = ($subject_type === 'i32' && $has_int_arm && array_reduce($stmt->arms, fn($carry, $a) => $carry && ($a->is_wildcard || $a->int_lit !== null), true));
+        $has_payload  = !$is_int_match && isset($this->enum_defs[$subject_type]) && $this->enum_defs[$subject_type]['has_payload'];
+        $this->stack_size += $is_int_match ? 8 : 16;
         $this->match_subject_slots[spl_object_id($stmt)] = [
             'offset'      => $this->stack_size,
             'has_payload' => $has_payload,
-            'enum_type'   => $subject_type,
+            'enum_type'   => $is_int_match ? null : $subject_type,
+            'is_int'      => $is_int_match,
         ];
         foreach ($stmt->arms as $arm) {
             if ($arm->binding !== null) {
@@ -508,6 +511,12 @@ class CodeGen {
 
     private function registerIfLetSlot(IfLetNode $stmt): void {
         $enum_type = $stmt->enum_name ?? $this->exprType($stmt->subject);
+        if (!isset($this->enum_defs[$enum_type])) {
+            $subject_type = $this->exprType($stmt->subject);
+            if (($stmt->enum_name === 'Option' && str_starts_with($subject_type, 'Option<')) || ($stmt->enum_name === 'Result' && str_starts_with($subject_type, 'Result<'))) {
+                $enum_type = $subject_type;
+            }
+        }
         $has_payload = isset($this->enum_defs[$enum_type]) && $this->enum_defs[$enum_type]['has_payload'];
         $this->stack_size += 16;
         $this->if_let_subject_slots[spl_object_id($stmt)] = [
@@ -527,6 +536,12 @@ class CodeGen {
 
     private function registerWhileLetSlot(WhileLetNode $stmt): void {
         $enum_type = $stmt->enum_name ?? $this->exprType($stmt->subject);
+        if (!isset($this->enum_defs[$enum_type])) {
+            $subject_type = $this->exprType($stmt->subject);
+            if (($stmt->enum_name === 'Option' && str_starts_with($subject_type, 'Option<')) || ($stmt->enum_name === 'Result' && str_starts_with($subject_type, 'Result<'))) {
+                $enum_type = $subject_type;
+            }
+        }
         $has_payload = isset($this->enum_defs[$enum_type]) && $this->enum_defs[$enum_type]['has_payload'];
         $this->stack_size += 16;
         $this->if_let_subject_slots[spl_object_id($stmt)] = [
