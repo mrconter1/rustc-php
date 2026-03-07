@@ -175,6 +175,16 @@ class ModuleResolver {
         $mod_dir_path = $dir . DIRECTORY_SEPARATOR . $mod_name . DIRECTORY_SEPARATOR . 'mod.rs';
         if (file_exists($mod_dir_path)) return realpath($mod_dir_path);
 
+        if ($mod_name === 'alloc') {
+            $std_base = realpath(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'std');
+            if ($std_base !== false) {
+                $std_file = $std_base . DIRECTORY_SEPARATOR . 'alloc.rs';
+                if (file_exists($std_file)) return realpath($std_file);
+                $std_mod = $std_base . DIRECTORY_SEPARATOR . 'alloc' . DIRECTORY_SEPARATOR . 'mod.rs';
+                if (file_exists($std_mod)) return realpath($std_mod);
+            }
+        }
+
         throw new RuntimeException("Cannot find module '$mod_name': looked for '$file_path' and '$mod_dir_path'");
     }
 

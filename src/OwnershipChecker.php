@@ -917,8 +917,15 @@ $is_int_match = ($base_type === 'i32' && $has_int_arm && array_reduce($stmt->arm
                 $this->checkExpr($arg);
             }
 
-            if ($expr->name === 'alloc') {
-                throw new RuntimeException("Undefined function 'alloc'" . $this->loc($expr) . "");
+            if (in_array($expr->name, ['alloc', 'alloc__alloc', 'alloc::alloc'], true)) {
+                if ($this->current_module !== 'alloc') {
+                    throw new RuntimeException("Undefined function 'alloc'" . $this->loc($expr) . "");
+                }
+                if (count($expr->args) !== 1) {
+                    throw new RuntimeException("alloc() takes exactly 1 argument" . $this->loc($expr) . "");
+                }
+                $this->checkExpr($expr->args[0]);
+                return;
             }
             if ($expr->name === 'Box::new') {
                 if (count($expr->args) !== 1) {

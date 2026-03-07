@@ -370,6 +370,9 @@ class CodeGen {
 
     private function patchCalls(): void {
         foreach ($this->call_patches as [$patch_pos, $func_name]) {
+            if ($func_name === 'alloc::alloc') {
+                $func_name = 'alloc__alloc';
+            }
             if (!isset($this->func_addrs[$func_name])) {
                 throw new RuntimeException("Undefined function '$func_name'");
             }
@@ -451,6 +454,16 @@ class CodeGen {
             if ($this->isFatType($ptype)) {
                 $this->asm->store(X86::RBP, -($var['offset'] - 8), self::ARG_REGS[$ri + 1]);
             }
+        }
+
+        if ($name === 'alloc__alloc') {
+            $this->asm->load(X86::RDI, X86::RBP, -$this->vars[$fn->params[0]['name']]['offset']);
+            $patch_pos = $this->asm->call_rel32();
+            $this->call_patches[] = [$patch_pos, 'alloc'];
+            $this->asm->mov(X86::RSP, X86::RBP);
+            $this->asm->pop(X86::RBP);
+            $this->asm->ret();
+            return;
         }
 
         $this->generateBody($fn->body);
