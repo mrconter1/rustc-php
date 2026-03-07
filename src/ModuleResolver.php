@@ -371,6 +371,14 @@ class ModuleResolver {
         }
 
         $name_map = array_merge($struct_import_map, $enum_import_map, $fn_import_map);
+        foreach ($ast->structs as $sd) {
+            $mangled_name = $prefix === '' ? $sd->name : $prefix . '__' . $sd->name;
+            $name_map[$sd->name] = $mangled_name;
+        }
+        foreach ($ast->enums as $ed) {
+            $mangled_name = $prefix === '' ? $ed->name : $prefix . '__' . $ed->name;
+            $name_map[$ed->name] = $mangled_name;
+        }
 
         foreach ($ast->structs as $sd) {
             $mangled_name = $prefix === '' ? $sd->name : $prefix . '__' . $sd->name;
@@ -493,6 +501,14 @@ class ModuleResolver {
         if ($stmt instanceof DerefAssignNode) {
             return new DerefAssignNode(
                 $this->rewriteExpr($stmt->operand, $name_map, $prefix),
+                $this->rewriteExpr($stmt->value, $name_map, $prefix),
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof IndexAssignNode) {
+            return new IndexAssignNode(
+                $this->rewriteExpr($stmt->object, $name_map, $prefix),
+                $this->rewriteExpr($stmt->index, $name_map, $prefix),
                 $this->rewriteExpr($stmt->value, $name_map, $prefix),
                 $stmt->line
             );

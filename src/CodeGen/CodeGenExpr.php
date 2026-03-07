@@ -439,6 +439,27 @@ trait CodeGenExpr {
         if ($expr instanceof IndexNode) {
             $obj_type = $this->exprType($expr->object);
             $this->generateExpr($expr->object);
+            $base = $obj_type;
+            if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
+            elseif (str_starts_with($base, '&')) $base = substr($base, 1);
+            if ($base === 'alloc__VecI32') {
+                if (str_starts_with($obj_type, '&')) {
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                } else {
+                    $this->asm->push(X86::RDX);
+                }
+                $this->asm->push(X86::RAX);
+                $this->generateExpr($expr->index);
+                $this->asm->mov(X86::RCX, X86::RAX);
+                $this->asm->pop(X86::RAX);
+                $this->asm->imul_imm8(X86::RCX, X86::RCX, 8);
+                $this->asm->add(X86::RAX, X86::RCX);
+                $this->asm->load(X86::RAX, X86::RAX, 0);
+                if ($base === 'alloc__VecI32' && !str_starts_with($obj_type, '&')) {
+                    $this->asm->pop(X86::RDX);
+                }
+                return;
+            }
             $this->asm->push(X86::RDX);
             $this->asm->push(X86::RAX);
             $this->generateExpr($expr->index);

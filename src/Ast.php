@@ -502,6 +502,19 @@ class DerefAssignNode {
     }
 }
 
+class IndexAssignNode {
+    public mixed $object;
+    public mixed $index;
+    public mixed $value;
+    public int   $line;
+    public function __construct(mixed $object, mixed $index, mixed $value, int $line) {
+        $this->object = $object;
+        $this->index  = $index;
+        $this->value  = $value;
+        $this->line   = $line;
+    }
+}
+
 class UnaryOpNode {
     public string $op;
     public mixed  $operand;

@@ -199,6 +199,11 @@ class OwnershipChecker {
                 $this->collectTypesFromExpr($stmt->operand, $types);
                 $this->collectTypesFromExpr($stmt->value, $types);
             }
+            if ($stmt instanceof IndexAssignNode) {
+                $this->collectTypesFromExpr($stmt->object, $types);
+                $this->collectTypesFromExpr($stmt->index, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
             if ($stmt instanceof IfNode) {
                 $this->collectTypesFromExpr($stmt->condition, $types);
                 $this->collectTypesFromStmts($stmt->then_body, $types);
@@ -541,6 +546,20 @@ class OwnershipChecker {
                 }
             }
             $this->checkExpr($stmt->value);
+            return;
+        }
+
+        if ($stmt instanceof IndexAssignNode) {
+            $this->checkExpr($stmt->object);
+            $this->checkExpr($stmt->index);
+            $this->checkExpr($stmt->value);
+            $obj_type = $this->exprType($stmt->object);
+            $base = $obj_type;
+            if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
+            elseif (str_starts_with($base, '&')) $base = substr($base, 1);
+            if ($base !== 'alloc__VecI32' && !preg_match('/^&(mut )?\[i32\]$/', $obj_type)) {
+                throw new RuntimeException("Index assignment only supported for VecI32 and [i32]" . $this->loc($stmt) . "");
+            }
             return;
         }
 

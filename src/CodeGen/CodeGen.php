@@ -205,6 +205,11 @@ class CodeGen {
                 $this->collectTypesFromExpr($stmt->value, $types);
             }
             if ($stmt instanceof DerefAssignNode) $this->collectTypesFromExpr($stmt->operand, $types);
+            if ($stmt instanceof IndexAssignNode) {
+                $this->collectTypesFromExpr($stmt->object, $types);
+                $this->collectTypesFromExpr($stmt->index, $types);
+                $this->collectTypesFromExpr($stmt->value, $types);
+            }
             if ($stmt instanceof IfNode) {
                 $this->collectTypesFromExpr($stmt->condition, $types);
                 $this->collectTypesFromStmts($stmt->then_body, $types);
@@ -480,6 +485,8 @@ class CodeGen {
         throw new RuntimeException("Static '{$s->name}' initializer must be an integer literal at line {$s->line}");
     }
 
+    private ?int $sret_param_offset = null;
+
     private function generateFunction(FunctionNode $fn, ?string $mangled_name = null, ?string $struct_name = null): void {
         $name = $mangled_name ?? $fn->name;
         $this->func_addrs[$name] = $this->asm->pos();
@@ -487,9 +494,19 @@ class CodeGen {
         $this->stack_size = 0;
         $this->return_patches = [];
         $this->let_slots = [];
+        $this->sret_param_offset = null;
+
+        $return_type = $fn->return_type;
+        if ($struct_name !== null && $return_type !== null) {
+            $return_type = str_replace('self', $struct_name, $return_type);
+        }
+        $params = $fn->params;
+        if ($return_type !== null && isset($this->struct_defs[$return_type]) && $this->struct_defs[$return_type]['size'] > 16) {
+            $params = array_merge([['name' => '.sret', 'type' => '*mut u8']], $params);
+        }
 
         $reg_idx = 0;
-        foreach ($fn->params as $param) {
+        foreach ($params as $param) {
             $ptype = $param['type'];
             if ($struct_name !== null) {
                 $ptype = str_replace('self', $struct_name, $ptype);
@@ -502,6 +519,9 @@ class CodeGen {
                 'reg_idx' => $reg_idx,
             ];
             $reg_idx += $this->isFatType($ptype) ? 2 : 1;
+        }
+        if ($return_type !== null && isset($this->struct_defs[$return_type]) && $this->struct_defs[$return_type]['size'] > 16) {
+            $this->sret_param_offset = $this->vars['.sret']['offset'];
         }
 
         $param_vars = $this->vars;
@@ -519,7 +539,7 @@ class CodeGen {
             }
         }
 
-        foreach ($fn->params as $param) {
+        foreach ($params as $param) {
             $var   = $this->vars[$param['name']];
             $ptype = $var['type'];
             $ri    = $var['reg_idx'];
@@ -530,7 +550,8 @@ class CodeGen {
         }
 
         if ($name === 'alloc__alloc') {
-            $this->asm->load(X86::RDI, X86::RBP, -$this->vars[$fn->params[0]['name']]['offset']);
+            $first = $params[0]['name'];
+            $this->asm->load(X86::RDI, X86::RBP, -$this->vars[$first]['offset']);
             $patch_pos = $this->asm->call_rel32();
             $this->call_patches[] = [$patch_pos, 'alloc'];
             $this->asm->mov(X86::RSP, X86::RBP);
@@ -558,7 +579,7 @@ class CodeGen {
             return;
         }
 
-        $this->generateBody($fn->body);
+        $this->generateBody($fn->body, true);
 
         $this->asm->xor_(X86::RAX, X86::RAX);
 
@@ -802,8 +823,29 @@ class CodeGen {
         }
     }
 
-    private function generateBody(array $stmts): void {
-        foreach ($stmts as $stmt) {
+    private function generateBody(array $stmts, bool $is_function_body = false): void {
+        $n = count($stmts);
+        foreach ($stmts as $i => $stmt) {
+            if ($is_function_body
+                && $this->sret_param_offset !== null
+                && $i === $n - 1
+                && $stmt instanceof ExprStmtNode
+                && $stmt->expr instanceof StructLitNode
+            ) {
+                $offset = $this->sret_param_offset;
+                if ($offset > 127) {
+                    $this->asm->load_rbp_disp32(X86::R9, -$offset);
+                } else {
+                    $this->asm->load(X86::R9, X86::RBP, -$offset);
+                }
+                $sd = $this->struct_defs[$stmt->expr->struct_name];
+                foreach ($stmt->expr->fields as $f) {
+                    $this->generateExpr($f['value']);
+                    $field_off = $sd['field_offsets'][$f['name']];
+                    $this->asm->store(X86::R9, $field_off, X86::RAX);
+                }
+                return;
+            }
             $this->generateStmt($stmt);
         }
     }

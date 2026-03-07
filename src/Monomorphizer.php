@@ -286,6 +286,10 @@ class Monomorphizer {
             $this->scanExpr($stmt->value);
         } elseif ($stmt instanceof DerefAssignNode) {
             $this->scanExpr($stmt->value);
+        } elseif ($stmt instanceof IndexAssignNode) {
+            $this->scanExpr($stmt->object);
+            $this->scanExpr($stmt->index);
+            $this->scanExpr($stmt->value);
         } elseif ($stmt instanceof ReturnNode) {
             if ($stmt->value !== null) $this->scanExpr($stmt->value);
         } elseif ($stmt instanceof ExprStmtNode) {
@@ -705,6 +709,14 @@ class Monomorphizer {
                 $stmt->line
             );
         }
+        if ($stmt instanceof IndexAssignNode) {
+            return new IndexAssignNode(
+                $this->substituteExpr($stmt->object, $map),
+                $this->substituteExpr($stmt->index, $map),
+                $this->substituteExpr($stmt->value, $map),
+                $stmt->line
+            );
+        }
         if ($stmt instanceof ReturnNode) {
             return new ReturnNode(
                 $stmt->value !== null ? $this->substituteExpr($stmt->value, $map) : null,
@@ -905,6 +917,13 @@ class Monomorphizer {
         if ($stmt instanceof DerefAssignNode) {
             return new DerefAssignNode(
                 $this->rewriteExpr($stmt->operand),
+                $this->rewriteExpr($stmt->value), $stmt->line
+            );
+        }
+        if ($stmt instanceof IndexAssignNode) {
+            return new IndexAssignNode(
+                $this->rewriteExpr($stmt->object),
+                $this->rewriteExpr($stmt->index),
                 $this->rewriteExpr($stmt->value), $stmt->line
             );
         }

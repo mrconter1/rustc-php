@@ -130,6 +130,10 @@ trait CodeGenTypes {
             $obj_type = $this->exprType($expr->object);
             if ($obj_type === '&str' || $obj_type === '&mut str' || $obj_type === 'str') return 'i32';
             if (preg_match('/^&(mut )?\[i32\]$/', $obj_type)) return 'i32';
+            $base = $obj_type;
+            if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
+            elseif (str_starts_with($base, '&')) $base = substr($base, 1);
+            if ($base === 'alloc__VecI32') return 'i32';
             return 'i32';
         }
         if ($expr instanceof IfNode) {

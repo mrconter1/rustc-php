@@ -100,6 +100,15 @@ class ClosureDesugar {
             );
         }
 
+        if ($stmt instanceof IndexAssignNode) {
+            return new IndexAssignNode(
+                $this->rewriteExpr($stmt->object, $scope, $closure_vars),
+                $this->rewriteExpr($stmt->index, $scope, $closure_vars),
+                $this->rewriteExpr($stmt->value, $scope, $closure_vars),
+                $stmt->line
+            );
+        }
+
         if ($stmt instanceof ExprStmtNode) {
             return new ExprStmtNode($this->rewriteExpr($stmt->expr, $scope, $closure_vars), $stmt->line);
         }

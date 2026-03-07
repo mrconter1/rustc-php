@@ -513,6 +513,14 @@ class Parser {
             return new FieldAssignNode($expr->object, $expr->field_name, $value, $line);
         }
 
+        if ($expr instanceof IndexNode && $this->check(Token::EQ)) {
+            $line = $this->current()->line;
+            $this->pos++;
+            $value = $this->parseExpr();
+            $this->expect(Token::SEMICOLON);
+            return new IndexAssignNode($expr->object, $expr->index, $value, $line);
+        }
+
         if ($this->check(Token::RBRACE)) {
             return new ReturnNode($expr, $expr->line);
         }

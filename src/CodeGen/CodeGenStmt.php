@@ -18,6 +18,48 @@ trait CodeGenStmt {
                 return;
             }
 
+            if ($stmt->value instanceof CallNode) {
+                $ret_type = $this->exprType($stmt->value);
+                $ret_size = isset($this->struct_defs[$ret_type]) ? $this->struct_defs[$ret_type]['size'] : 8;
+                if ($ret_size > 16) {
+                    $n = count($stmt->value->args);
+                    if ($n > 5) {
+                        throw new RuntimeException("Functions with more than 5 arguments (with sret) not supported at line {$stmt->value->line}");
+                    }
+                    $sig = $this->func_sigs[$stmt->value->name] ?? null;
+                    $reg_idx = 0;
+                    $param_reg_map = [];
+                    for ($i = 0; $i < $n; $i++) {
+                        $ptype = $sig ? $sig['params'][$i]['type'] : 'i32';
+                        $param_reg_map[$i] = ['reg_idx' => $reg_idx, 'type' => $ptype];
+                        $reg_idx += $this->isFatType($ptype) ? 2 : 1;
+                    }
+                    for ($i = 0; $i < $n; $i++) {
+                        $this->generateExpr($stmt->value->args[$i]);
+                        if ($this->isFatType($param_reg_map[$i]['type'])) {
+                            $this->asm->push(X86::RDX);
+                        }
+                        $this->asm->push(X86::RAX);
+                    }
+                    if ($slot['offset'] > 127) {
+                        $this->asm->lea_disp32(X86::RDI, X86::RBP, -$slot['offset']);
+                    } else {
+                        $this->asm->lea(X86::RDI, X86::RBP, -$slot['offset']);
+                    }
+                    for ($i = $n - 1; $i >= 0; $i--) {
+                        $ri = 1 + $param_reg_map[$i]['reg_idx'];
+                        $this->asm->pop(self::ARG_REGS[$ri]);
+                        if ($this->isFatType($param_reg_map[$i]['type'])) {
+                            $this->asm->pop(self::ARG_REGS[$ri + 1]);
+                        }
+                    }
+                    $patch_pos = $this->asm->call_rel32();
+                    $this->call_patches[] = [$patch_pos, $stmt->value->name];
+                    $this->vars[$stmt->name] = $slot;
+                    return;
+                }
+            }
+
             if ($stmt->value instanceof StructLitNode) {
                 $sd = $this->struct_defs[$stmt->value->struct_name];
                 foreach ($stmt->value->fields as $f) {
@@ -46,6 +88,44 @@ trait CodeGenStmt {
                 $this->asm->store(X86::RCX, 0, X86::RAX);
             }
             return;
+        }
+
+        if ($stmt instanceof IndexAssignNode) {
+            $obj_type = $this->exprType($stmt->object);
+            $base = $obj_type;
+            if (str_starts_with($base, '&mut ')) $base = substr($base, 5);
+            elseif (str_starts_with($base, '&')) $base = substr($base, 1);
+            if ($base === 'alloc__VecI32') {
+                $is_ref = false;
+                if ($stmt->object instanceof IdentNode && isset($this->vars[$stmt->object->name])) {
+                    $raw_type = $this->vars[$stmt->object->name]['type'];
+                    $is_ref = str_starts_with($raw_type, '&');
+                } else {
+                    $is_ref = str_starts_with($obj_type, '&');
+                }
+                $this->generateExpr($stmt->object);
+                if ($is_ref) {
+                    $this->asm->load(X86::RAX, X86::RAX, 0);
+                } else {
+                    $this->asm->push(X86::RDX);
+                }
+                $this->asm->push(X86::RAX);
+                $this->generateExpr($stmt->index);
+                $this->asm->mov(X86::RCX, X86::RAX);
+                $this->asm->pop(X86::RAX);
+                $this->asm->imul_imm8(X86::RCX, X86::RCX, 8);
+                $this->asm->add(X86::RAX, X86::RCX);
+                $this->asm->push(X86::RAX);
+                $this->generateExpr($stmt->value);
+                $this->asm->mov(X86::RCX, X86::RAX);
+                $this->asm->pop(X86::RAX);
+                $this->asm->store(X86::RAX, 0, X86::RCX);
+                if (!$is_ref) {
+                    $this->asm->pop(X86::RDX);
+                }
+                return;
+            }
+            throw new RuntimeException("Index assignment for type '$obj_type' not supported at line {$stmt->line}");
         }
 
         if ($stmt instanceof FieldAssignNode) {
@@ -88,7 +168,21 @@ trait CodeGenStmt {
 
         if ($stmt instanceof ReturnNode) {
             if ($stmt->value !== null) {
-                $this->generateExpr($stmt->value);
+                if ($this->sret_param_offset !== null && $stmt->value instanceof StructLitNode) {
+                    if ($this->sret_param_offset > 127) {
+                        $this->asm->load_rbp_disp32(X86::R9, -$this->sret_param_offset);
+                    } else {
+                        $this->asm->load(X86::R9, X86::RBP, -$this->sret_param_offset);
+                    }
+                    $sd = $this->struct_defs[$stmt->value->struct_name];
+                    foreach ($stmt->value->fields as $f) {
+                        $this->generateExpr($f['value']);
+                        $field_off = $sd['field_offsets'][$f['name']];
+                        $this->asm->store(X86::R9, $field_off, X86::RAX);
+                    }
+                } else {
+                    $this->generateExpr($stmt->value);
+                }
             }
             $jmp_patch = $this->asm->jmp_rel32();
             $this->return_patches[] = $jmp_patch;

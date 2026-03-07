@@ -60,6 +60,13 @@ class X86 {
         }
     }
 
+    // mov reg64, [RBP + disp32] (for |disp| > 127)
+    public function load_rbp_disp32(int $reg, int $disp): void {
+        $rex = 0x48 | (($reg >> 3) << 2);
+        $modrm = 0x80 | (($reg & 7) << 3) | 5;
+        $this->emit(chr($rex) . "\x8B" . chr($modrm) . pack('V', $disp));
+    }
+
     // mov reg32, [base + disp8] (zero-extends to 64-bit)
     public function load32(int $reg, int $base, int $disp): void {
         $rex = (($reg >> 3) << 2) | ($base >> 3);
@@ -211,6 +218,16 @@ class X86 {
             $modrm = 0x40 | (($reg & 7) << 3) | ($base & 7);
             $this->emit(chr($rex) . "\x8D" . chr($modrm) . pack('c', $disp));
         }
+    }
+
+    // lea reg, [base + disp32] (for |disp| > 127 when base is RBP)
+    public function lea_disp32(int $reg, int $base, int $disp): void {
+        if ($base !== self::RBP && ($base & 7) !== self::RBP) {
+            throw new \InvalidArgumentException('lea_disp32 only supports RBP base');
+        }
+        $rex = 0x48 | (($reg >> 3) << 2);
+        $modrm = 0x80 | (($reg & 7) << 3) | 5;
+        $this->emit(chr($rex) . "\x8D" . chr($modrm) . pack('V', $disp));
     }
 
     // lea reg, [rsp + disp8]
