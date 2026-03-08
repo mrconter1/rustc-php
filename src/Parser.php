@@ -1046,6 +1046,9 @@ class Parser {
         if ($token->type === Token::PIPE) {
             return $this->parseClosure();
         }
+        if ($token->type === Token::OR) {
+            return $this->parseZeroArgClosure();
+        }
 
         if ($token->type === Token::LPAREN) {
             $line = $token->line;
@@ -1079,6 +1082,17 @@ class Parser {
             "Unexpected token " . ($token->value !== null ? "{$token->type}({$token->value})" : $token->type)
             . " at " . $token->location()
         );
+    }
+
+    private function parseZeroArgClosure(): ClosureNode {
+        $line = $this->expect(Token::OR)->line;
+        if ($this->check(Token::LBRACE)) {
+            $body = $this->parseBlock();
+        } else {
+            $expr = $this->parseExpr();
+            $body = [new ReturnNode($expr, $expr->line)];
+        }
+        return new ClosureNode([], $body, $line);
     }
 
     private function parseClosure(): ClosureNode {
@@ -1182,6 +1196,9 @@ class Parser {
             $this->expect(Token::RBRACKET);
             return $ref . "[$inner]";
         }
+        if ($this->check(Token::IMPL)) {
+            return $ref . $this->parseImplFnType();
+        }
         $name = $this->expect(Token::IDENT)->value;
         if ($this->check(Token::LT)) {
             $this->pos++;
@@ -1194,6 +1211,28 @@ class Parser {
             $name = $name . '<' . implode(',', $inners) . '>';
         }
         return $ref . $name;
+    }
+
+    private function parseImplFnType(): string {
+        $this->expect(Token::IMPL);
+        $fn_ident = $this->expect(Token::IDENT);
+        if ($fn_ident->value !== 'Fn') {
+            throw new RuntimeException("Expected 'Fn' after 'impl' at " . $fn_ident->location());
+        }
+        $this->expect(Token::LPAREN);
+        $arg_types = [];
+        if (!$this->check(Token::RPAREN)) {
+            $arg_types[] = $this->parseType();
+            while ($this->check(Token::COMMA)) {
+                $this->pos++;
+                $arg_types[] = $this->parseType();
+            }
+        }
+        $this->expect(Token::RPAREN);
+        $this->expect(Token::ARROW);
+        $return_type = $this->parseType();
+        $args_str = count($arg_types) === 0 ? '' : implode(',', $arg_types);
+        return "impl Fn($args_str) -> $return_type";
     }
 
     private function tryParseBuiltinEnumType(string $base): ?string {

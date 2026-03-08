@@ -11,6 +11,9 @@ class Monomorphizer {
     private array $concrete_impls   = [];
     private array $concrete_enums   = [];
 
+    private array $closure_poly_fns   = [];
+    private array $closure_fn_instances = [];
+
     private array $fn_instances     = [];
     private array $struct_instances = [];
     private array $impl_instances   = [];
@@ -27,6 +30,8 @@ class Monomorphizer {
             if (!empty($fn->type_params)) {
                 $this->generic_fns[$fn->name] = $fn;
                 $this->fn_type_params[$fn->name] = $fn->type_params;
+            } elseif ($this->hasImplFnParam($fn)) {
+                $this->closure_poly_fns[$fn->name] = $fn;
             } else {
                 $this->concrete_fns[] = $fn;
             }
@@ -82,6 +87,12 @@ class Monomorphizer {
                 $mangled = $this->mangleFn($name, $map);
                 if (!$this->hasConcreteFunction($mangled)) {
                     $this->emitFunction($name, $map);
+                    $changed = true;
+                }
+            }
+            foreach ($this->closure_fn_instances as $key => [$name, $closure_types]) {
+                if (!$this->hasConcreteFunction($key)) {
+                    $this->emitClosureFunction($name, $closure_types);
                     $changed = true;
                 }
             }
@@ -144,6 +155,34 @@ class Monomorphizer {
             $consts,
             $statics
         );
+    }
+
+    private function hasImplFnParam(FunctionNode $fn): bool {
+        foreach ($fn->params as $p) {
+            $t = $p['type'];
+            if (str_starts_with($t, 'impl Fn(') || (str_starts_with($t, '&') && str_contains($t, 'impl Fn('))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function getImplFnParamIndices(FunctionNode $fn): array {
+        $indices = [];
+        foreach ($fn->params as $i => $p) {
+            $t = preg_replace('/^&(mut )?/', '', $p['type']);
+            if (str_starts_with($t, 'impl Fn(')) {
+                $indices[] = $i;
+            }
+        }
+        return $indices;
+    }
+
+    private function closureStructToCallName(string $struct_name): string {
+        if (!preg_match('/^__Closure_(\d+)$/', $struct_name, $m)) {
+            throw new RuntimeException("Expected closure struct name __Closure_N, got: $struct_name");
+        }
+        return '__closure_' . $m[1] . '_call';
     }
 
     private function stripGeneric(string $name): string {
@@ -325,6 +364,21 @@ class Monomorphizer {
     private function scanExpr(mixed $expr): void {
         if ($expr instanceof CallNode) {
             foreach ($expr->args as $arg) $this->scanExpr($arg);
+            if (isset($this->closure_poly_fns[$expr->name])) {
+                $fn_def = $this->closure_poly_fns[$expr->name];
+                $impl_indices = $this->getImplFnParamIndices($fn_def);
+                $closure_types = [];
+                foreach ($impl_indices as $i) {
+                    if (!isset($expr->args[$i])) break;
+                    $concrete = $this->guessExprType($expr->args[$i]);
+                    if ($concrete === null || !str_starts_with($concrete, '__Closure_')) break;
+                    $closure_types[] = $concrete;
+                }
+                if (count($closure_types) === count($impl_indices)) {
+                    $key = $expr->name . '__' . implode('__', $closure_types);
+                    $this->closure_fn_instances[$key] = [$expr->name, $closure_types];
+                }
+            }
             $base_name = $expr->name;
             $pos = strpos($base_name, '::');
             if ($pos !== false) $base_name = substr($base_name, $pos + 2);
@@ -557,6 +611,168 @@ class Monomorphizer {
             return $name;
         }
         return null;
+    }
+
+    private function emitClosureFunction(string $name, array $closure_types): void {
+        $fn = $this->closure_poly_fns[$name];
+        $mangled = $name . '__' . implode('__', $closure_types);
+        $impl_indices = $this->getImplFnParamIndices($fn);
+        $param_name_to_call = [];
+        foreach ($impl_indices as $idx => $i) {
+            $param_name_to_call[$fn->params[$i]['name']] = $this->closureStructToCallName($closure_types[$idx]);
+        }
+        $new_params = [];
+        $closure_idx = 0;
+        foreach ($fn->params as $p) {
+            $t = preg_replace('/^&(mut )?/', '', $p['type']);
+            if (str_starts_with($t, 'impl Fn(')) {
+                $new_params[] = ['name' => $p['name'], 'type' => $closure_types[$closure_idx++]];
+            } else {
+                $new_params[] = ['name' => $p['name'], 'type' => $this->rewriteTypeName($p['type'])];
+            }
+        }
+        $new_body = $this->rewriteBodyForClosure($fn->body, $param_name_to_call);
+        $this->concrete_fns[] = new FunctionNode($mangled, $new_params, $fn->return_type !== null ? $this->rewriteTypeName($fn->return_type) : null, $new_body, $fn->line, [], $fn->is_pub, $fn->module, []);
+    }
+
+    private function rewriteBodyForClosure(?array $stmts, array $param_name_to_call): ?array {
+        if ($stmts === null) return null;
+        $result = [];
+        foreach ($stmts as $stmt) {
+            $result[] = $this->rewriteStmtForClosure($stmt, $param_name_to_call);
+        }
+        return $result;
+    }
+
+    private function rewriteStmtForClosure(mixed $stmt, array $param_name_to_call): mixed {
+        if ($stmt instanceof LetNode) {
+            return new LetNode($stmt->name, $stmt->type_name, $this->rewriteExprForClosure($stmt->value, $param_name_to_call), $stmt->mutable, $stmt->line, $stmt->bindings);
+        }
+        if ($stmt instanceof AssignNode) {
+            return new AssignNode($stmt->name, $this->rewriteExprForClosure($stmt->value, $param_name_to_call), $stmt->line);
+        }
+        if ($stmt instanceof ReturnNode) {
+            return new ReturnNode($stmt->value !== null ? $this->rewriteExprForClosure($stmt->value, $param_name_to_call) : null, $stmt->line);
+        }
+        if ($stmt instanceof ExprStmtNode) {
+            return new ExprStmtNode($this->rewriteExprForClosure($stmt->expr, $param_name_to_call), $stmt->line);
+        }
+        if ($stmt instanceof PrintlnNode) {
+            $parts = [];
+            foreach ($stmt->parts as $p) {
+                $parts[] = is_string($p) ? $p : $this->rewriteExprForClosure($p, $param_name_to_call);
+            }
+            return new PrintlnNode($parts, $stmt->line);
+        }
+        if ($stmt instanceof IfNode) {
+            return new IfNode(
+                $this->rewriteExprForClosure($stmt->condition, $param_name_to_call),
+                $this->rewriteBodyForClosure($stmt->then_body, $param_name_to_call),
+                $stmt->else_body !== null ? $this->rewriteBodyForClosure($stmt->else_body, $param_name_to_call) : null,
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof WhileNode) {
+            return new WhileNode(
+                $this->rewriteExprForClosure($stmt->condition, $param_name_to_call),
+                $this->rewriteBodyForClosure($stmt->body, $param_name_to_call),
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof IfLetNode) {
+            return new IfLetNode(
+                $this->rewriteExprForClosure($stmt->subject, $param_name_to_call),
+                $stmt->enum_name,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBodyForClosure($stmt->then_body, $param_name_to_call),
+                $stmt->else_body !== null ? $this->rewriteBodyForClosure($stmt->else_body, $param_name_to_call) : null,
+                $stmt->line,
+                $stmt->literal_value
+            );
+        }
+        if ($stmt instanceof WhileLetNode) {
+            return new WhileLetNode(
+                $this->rewriteExprForClosure($stmt->subject, $param_name_to_call),
+                $stmt->enum_name,
+                $stmt->variant_name,
+                $stmt->binding,
+                $this->rewriteBodyForClosure($stmt->body, $param_name_to_call),
+                $stmt->line
+            );
+        }
+        if ($stmt instanceof LoopNode) {
+            return new LoopNode($this->rewriteBodyForClosure($stmt->body, $param_name_to_call), $stmt->line);
+        }
+        if ($stmt instanceof MatchNode) {
+            $arms = [];
+            foreach ($stmt->arms as $arm) {
+                $arms[] = new MatchArmNode($arm->is_wildcard, $arm->enum_name, $arm->variant_name, $arm->binding, $this->rewriteBodyForClosure($arm->body, $param_name_to_call), $arm->line, $arm->int_lit);
+            }
+            return new MatchNode($this->rewriteExprForClosure($stmt->subject, $param_name_to_call), $arms, $stmt->line);
+        }
+        return $stmt;
+    }
+
+    private function rewriteExprForClosure(mixed $expr, array $param_name_to_call): mixed {
+        if ($expr instanceof CallNode && isset($param_name_to_call[$expr->name])) {
+            $call_fn = $param_name_to_call[$expr->name];
+            $new_args = [new BorrowNode(new IdentNode($expr->name, $expr->line), false, $expr->line)];
+            foreach ($expr->args as $a) {
+                $new_args[] = $this->rewriteExprForClosure($a, $param_name_to_call);
+            }
+            return new CallNode($call_fn, $new_args, $expr->line);
+        }
+        if ($expr instanceof CallNode) {
+            $args = [];
+            foreach ($expr->args as $a) $args[] = $this->rewriteExprForClosure($a, $param_name_to_call);
+            return new CallNode($expr->name, $args, $expr->line);
+        }
+        if ($expr instanceof BinaryOpNode) {
+            return new BinaryOpNode($this->rewriteExprForClosure($expr->left, $param_name_to_call), $expr->op, $this->rewriteExprForClosure($expr->right, $param_name_to_call), $expr->line);
+        }
+        if ($expr instanceof UnaryOpNode) {
+            return new UnaryOpNode($expr->op, $this->rewriteExprForClosure($expr->operand, $param_name_to_call), $expr->line);
+        }
+        if ($expr instanceof BorrowNode) {
+            return new BorrowNode($this->rewriteExprForClosure($expr->operand, $param_name_to_call), $expr->mutable, $expr->line);
+        }
+        if ($expr instanceof DerefNode) {
+            return new DerefNode($this->rewriteExprForClosure($expr->operand, $param_name_to_call), $expr->line);
+        }
+        if ($expr instanceof FieldAccessNode) {
+            return new FieldAccessNode($this->rewriteExprForClosure($expr->object, $param_name_to_call), $expr->field_name, $expr->line);
+        }
+        if ($expr instanceof IndexNode) {
+            return new IndexNode($this->rewriteExprForClosure($expr->object, $param_name_to_call), $this->rewriteExprForClosure($expr->index, $param_name_to_call), $expr->line);
+        }
+        if ($expr instanceof MethodCallNode) {
+            $args = [];
+            foreach ($expr->args as $a) $args[] = $this->rewriteExprForClosure($a, $param_name_to_call);
+            return new MethodCallNode($this->rewriteExprForClosure($expr->receiver, $param_name_to_call), $expr->method_name, $args, $expr->line);
+        }
+        if ($expr instanceof IfNode || $expr instanceof IfLetNode || $expr instanceof MatchNode) {
+            return $this->rewriteStmtForClosure($expr, $param_name_to_call);
+        }
+        if ($expr instanceof StructLitNode) {
+            $fields = [];
+            foreach ($expr->fields as $f) {
+                $fields[] = ['name' => $f['name'], 'value' => $this->rewriteExprForClosure($f['value'], $param_name_to_call)];
+            }
+            return new StructLitNode($expr->struct_name, $fields, $expr->line);
+        }
+        if ($expr instanceof TupleLitNode) {
+            $elements = [];
+            foreach ($expr->elements as $e) $elements[] = $this->rewriteExprForClosure($e, $param_name_to_call);
+            return new TupleLitNode($elements, $expr->line);
+        }
+        if ($expr instanceof TupleIndexNode) {
+            return new TupleIndexNode($this->rewriteExprForClosure($expr->object, $param_name_to_call), $expr->index, $expr->line);
+        }
+        if ($expr instanceof CastNode) {
+            return new CastNode($this->rewriteExprForClosure($expr->expr, $param_name_to_call), $expr->target_type, $expr->line);
+        }
+        return $expr;
     }
 
     private function emitFunction(string $name, array $map): void {
@@ -1021,6 +1237,22 @@ class Monomorphizer {
         if ($expr instanceof CallNode) {
             $args = [];
             foreach ($expr->args as $a) $args[] = $this->rewriteExpr($a, null);
+
+            if (isset($this->closure_poly_fns[$expr->name])) {
+                $fn_def = $this->closure_poly_fns[$expr->name];
+                $impl_indices = $this->getImplFnParamIndices($fn_def);
+                $closure_types = [];
+                foreach ($impl_indices as $i) {
+                    if (!isset($args[$i])) break;
+                    $concrete = $this->guessExprType($args[$i]);
+                    if ($concrete === null || !str_starts_with($concrete, '__Closure_')) break;
+                    $closure_types[] = $concrete;
+                }
+                if (count($closure_types) === count($impl_indices)) {
+                    $mangled = $expr->name . '__' . implode('__', $closure_types);
+                    return new CallNode($mangled, $args, $expr->line);
+                }
+            }
 
             if (isset($this->generic_fns[$expr->name])) {
                 $map = $this->inferTypeMap($this->generic_fns[$expr->name], $expr->args);
