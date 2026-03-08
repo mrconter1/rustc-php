@@ -1088,6 +1088,12 @@ class Monomorphizer {
             $size = $this->typeSize($concrete_type);
             return new IntLitNode($size, $expr->line);
         }
+        if ($expr instanceof EnumVariantNode) {
+            $args = [];
+            foreach ($expr->args as $a) $args[] = $this->substituteExpr($a, $map);
+            $enum_name = $this->substituteType($expr->enum_name, $map);
+            return new EnumVariantNode($enum_name, $expr->variant_name, $args, $expr->line);
+        }
         return $expr;
     }
 

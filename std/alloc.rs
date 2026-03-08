@@ -16,6 +16,11 @@ pub struct Vec<T> {
     len: usize,
 }
 
+pub struct VecIter<T> {
+    vec_ref: &Vec<T>,
+    idx: usize,
+}
+
 impl<T> Vec<T> {
     pub fn new() -> Vec<T> {
         Vec {
@@ -38,6 +43,22 @@ impl<T> Vec<T> {
         }
         self[self.len] = x;
         self.len = self.len + 1;
+    }
+
+    pub fn iter(&self) -> VecIter<T> {
+        VecIter { vec_ref: self, idx: 0 }
+    }
+}
+
+impl<T> VecIter<T> {
+    pub fn next(&mut self) -> Option<T> {
+        if self.idx >= self.vec_ref.len {
+            Option::<T>::None
+        } else {
+            let i = self.idx;
+            self.idx = self.idx + 1;
+            Option::<T>::Some(self.vec_ref[i])
+        }
     }
 }
 

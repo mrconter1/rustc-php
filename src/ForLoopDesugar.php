@@ -92,12 +92,11 @@ class ForLoopDesugar {
         return [$let_idx, $let_end, $loop];
     }
 
-    /** Desugar `for x in expr` via into_iter / next / Option. */
+    /** Desugar `for x in expr` via next() / Option (expr must have .next() -> Option<T>). */
     private function desugarGeneric(string $var, mixed $iter_expr, array $body, int $line): array {
         $iter_var = $this->freshVar('iter');
 
-        $into_iter = new MethodCallNode($iter_expr, 'into_iter', [], $line);
-        $let_iter = new LetNode($iter_var, null, $into_iter, true, $line);
+        $let_iter = new LetNode($iter_var, null, $iter_expr, true, $line);
 
         $next_call = new MethodCallNode(new IdentNode($iter_var, $line), 'next', [], $line);
         $some_arm = new MatchArmNode(false, 'Option', 'Some', $var, $body, $line);

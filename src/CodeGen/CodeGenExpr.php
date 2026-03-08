@@ -150,6 +150,17 @@ trait CodeGenExpr {
                 } else {
                     $this->asm->load(X86::RAX, X86::RBP, -($var['offset'] - $field_off));
                 }
+            } else {
+                $this->generateExpr($expr->object);
+                $obj_type = $this->exprType($expr->object);
+                $base_type = $obj_type;
+                if (str_starts_with($base_type, '&mut ')) $base_type = substr($base_type, 5);
+                elseif (str_starts_with($base_type, '&')) $base_type = substr($base_type, 1);
+                $sd = $this->struct_defs[$base_type] ?? null;
+                if ($sd !== null && isset($sd['field_offsets'][$expr->field_name])) {
+                    $field_off = $sd['field_offsets'][$expr->field_name];
+                    $this->asm->load(X86::RAX, X86::RAX, $field_off);
+                }
             }
             return;
         }
