@@ -1,8 +1,31 @@
 <?php
 
 $cases_dir  = __DIR__ . '/cases';
-$tmp_binary = __DIR__ . '/../test_out';
 $src_dir    = __DIR__ . '/../src';
+
+// On Linux the binaries run natively, so keep them on the native filesystem.
+// On Windows they must sit in the working directory for `wsl ./name` to find them.
+const NATIVE = PHP_OS_FAMILY === 'Linux';
+
+// Usage: php tests/run.php [-j N]
+// Tests are split round-robin across N worker processes (default: one per core).
+// A worker is this same script started with --worker <index> <count>.
+$jobs   = null;
+$worker = null;
+for ($i = 1; $i < $argc; $i++) {
+    if ($argv[$i] === '-j' && isset($argv[$i + 1])) {
+        $jobs = max(1, (int)$argv[++$i]);
+    } elseif ($argv[$i] === '--worker' && isset($argv[$i + 2])) {
+        $worker = [(int)$argv[$i + 1], (int)$argv[$i + 2]];
+        $i += 2;
+    }
+}
+$jobs ??= defaultJobs();
+
+$suffix     = $worker !== null ? '_' . $worker[0] : '';
+$tmp_binary = NATIVE
+    ? sys_get_temp_dir() . '/rustc-php-test-' . getmypid()
+    : __DIR__ . '/../test_out' . $suffix;
 
 require_once $src_dir . '/Lexer.php';
 require_once $src_dir . '/Token.php';
@@ -26,42 +49,59 @@ foreach ($it as $f) {
 }
 sort($files);
 
+if ($worker !== null) {
+    // Worker: run our share of the files and report one JSON line per test.
+    [$index, $count] = $worker;
+    foreach ($files as $n => $file) {
+        if ($n % $count !== $index) continue;
+        $result = runOne($file, $cases_dir, $tmp_binary);
+        if ($result !== null) echo json_encode($result), "\n";
+    }
+    @unlink($tmp_binary);
+    exit(0);
+}
+
+$start = hrtime(true);
+
+if ($jobs === 1) {
+    $results = [];
+    foreach ($files as $file) {
+        $result = runOne($file, $cases_dir, $tmp_binary);
+        if ($result !== null) $results[] = $result;
+    }
+    @unlink($tmp_binary);
+} else {
+    $results = runWorkers($jobs);
+}
+
+usort($results, fn($a, $b) => strcmp($a['name'], $b['name']));
+
 $passed = 0;
 $failed = 0;
 $failed_tests = [];
-$start  = hrtime(true);
-
-foreach ($files as $file) {
-    $name   = str_replace('\\', '/', substr($file, strlen($cases_dir) + 1));
-    $header = parseHeader($file);
-
-    if (isset($header['error'])) {
-        $result = runErrorTest($file, $header['error'], $tmp_binary);
-    } elseif (isset($header['exit']) || isset($header['stdout'])) {
-        $result = runTest($file, $header, $tmp_binary);
-    } else {
-        if (file_exists(dirname($file) . DIRECTORY_SEPARATOR . 'main.rs') && basename($file) !== 'main.rs') {
-            continue;
-        }
-        echo "SKIP  $name — no test header\n";
-        continue;
-    }
-
-    if ($result === true) {
-        echo "PASS  $name\n";
+foreach ($results as $r) {
+    if ($r['status'] === 'skip') {
+        echo "SKIP  {$r['name']} — no test header\n";
+    } elseif ($r['status'] === 'pass') {
+        echo "PASS  {$r['name']}\n";
         $passed++;
     } else {
-        echo "FAIL  $name — $result\n";
-        $failed_tests[] = ['name' => $name, 'reason' => $result];
+        echo "FAIL  {$r['name']} — {$r['reason']}\n";
+        $failed_tests[] = $r;
         $failed++;
     }
 }
 
-@unlink($tmp_binary);
-
 $elapsed = (hrtime(true) - $start) / 1e9;
 echo "\n$passed passed, $failed failed\n";
-echo "Total time: " . round($elapsed, 2) . "s\n";
+echo "Total time: " . round($elapsed, 2) . "s ($jobs " . ($jobs === 1 ? 'job' : 'jobs') . ")\n";
+
+$timed = array_filter($results, fn($r) => $r['status'] !== 'skip');
+usort($timed, fn($a, $b) => $b['ms'] <=> $a['ms']);
+echo "Slowest: " . implode(', ', array_map(
+    fn($r) => $r['name'] . ' ' . round($r['ms']) . 'ms',
+    array_slice($timed, 0, 5)
+)) . "\n";
 
 if ($failed > 0) {
     echo "\n--- Failed tests ---\n";
@@ -71,6 +111,65 @@ if ($failed > 0) {
 }
 
 exit($failed > 0 ? 1 : 0);
+
+function defaultJobs(): int {
+    $n = NATIVE ? (int)@shell_exec('nproc') : (int)getenv('NUMBER_OF_PROCESSORS');
+    return max(1, $n);
+}
+
+// Returns ['name', 'status' => pass|fail|skip, 'reason', 'ms'], or null for
+// module files that are only compiled as part of their directory's main.rs.
+function runOne(string $file, string $cases_dir, string $tmp_binary): ?array {
+    $name   = str_replace('\\', '/', substr($file, strlen($cases_dir) + 1));
+    $header = parseHeader($file);
+    $start  = hrtime(true);
+
+    if (isset($header['error'])) {
+        $result = runErrorTest($file, $header['error'], $tmp_binary);
+    } elseif (isset($header['exit']) || isset($header['stdout'])) {
+        $result = runTest($file, $header, $tmp_binary);
+    } else {
+        if (file_exists(dirname($file) . DIRECTORY_SEPARATOR . 'main.rs') && basename($file) !== 'main.rs') {
+            return null;
+        }
+        return ['name' => $name, 'status' => 'skip', 'reason' => null, 'ms' => 0];
+    }
+
+    return [
+        'name'   => $name,
+        'status' => $result === true ? 'pass' : 'fail',
+        'reason' => $result === true ? null : $result,
+        'ms'     => (hrtime(true) - $start) / 1e6,
+    ];
+}
+
+// Workers write to temp files rather than pipes: stream_select does not work
+// on pipes under Windows, and a full pipe buffer would stall a worker.
+function runWorkers(int $jobs): array {
+    $procs = [];
+    for ($k = 0; $k < $jobs; $k++) {
+        $out = tempnam(sys_get_temp_dir(), 'rustc-php-w');
+        $cmd = [PHP_BINARY, __FILE__, '--worker', (string)$k, (string)$jobs];
+        $proc = proc_open($cmd, [1 => ['file', $out, 'w'], 2 => STDERR], $pipes, dirname(__DIR__));
+        $procs[] = [$proc, $out];
+    }
+
+    $results = [];
+    foreach ($procs as [$proc, $out]) {
+        $code = proc_close($proc);
+        foreach (file($out, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+            $r = json_decode($line, true);
+            if ($r === null) {
+                fwrite(STDERR, "worker printed non-JSON output: $line\n");
+                continue;
+            }
+            $results[] = $r;
+        }
+        if ($code !== 0) fwrite(STDERR, "worker exited with code $code\n");
+        @unlink($out);
+    }
+    return $results;
+}
 
 function parseHeader(string $file): array {
     $lines  = file($file);
@@ -118,10 +217,17 @@ function runTest(string $file, array $header, string $binary): string|true {
         return "compilation failed: " . $err;
     }
 
-    $binary_name = basename($binary);
     $timeout_sec = $header['timeout'] ?? 10;
     $expect_timeout = !empty($header['expect_timeout']);
-    $cmd = $timeout_sec > 0 ? "wsl timeout $timeout_sec ./$binary_name 2>&1" : "wsl ./$binary_name 2>&1";
+    if (NATIVE) {
+        chmod($binary, 0755);
+        $target = escapeshellarg($binary);
+        $prefix = '';
+    } else {
+        $target = './' . basename($binary);
+        $prefix = 'wsl ';
+    }
+    $cmd = $prefix . ($timeout_sec > 0 ? "timeout $timeout_sec " : '') . "$target 2>&1";
     exec($cmd, $run_out, $actual_exit);
 
     if ($expect_timeout) {

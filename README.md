@@ -101,6 +101,17 @@ Run the full test suite:
 php tests/run.php
 ```
 
+Tests run in parallel, one worker per core by default; pass `-j N` to choose, or `-j 1` to run serially. The runner prints the five slowest tests at the end.
+
+On Linux the compiled binaries are run directly. On Windows every binary is run through `wsl`, which costs about a second per test, so the fastest option there is to run the whole suite inside WSL:
+
+```
+wsl sudo apt install php-cli rsync   # once
+wsl bash tests/run-wsl.sh
+```
+
+`run-wsl.sh` mirrors the working tree into `/tmp` first, because PHP reading files through `/mnt/c` is roughly ten times slower than the native Linux filesystem. The full suite then takes about a second.
+
 Test cases live in `tests/cases/` organized into `fundamentals/valid/`, `fundamentals/invalid/`, `modules/`, and `programs/`. Each `.rs` file declares its expected output in comments at the top:
 
 ```rust
